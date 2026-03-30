@@ -40,24 +40,33 @@ var Themes = map[string]Theme{
 		Error:     lipgloss.Color("#BF616A"),
 		StatusBar: lipgloss.Color("#D8DEE9"),
 	},
-}
+	"ayu-dark": {
+		TitleBg:   lipgloss.Color("#FFB454"),
+		TitleFg:   lipgloss.Color("#0F1419"),
+		Border:    lipgloss.Color("#3E4B59"),
+		InfoTitle: lipgloss.Color("#E6B450"),
+		InfoKey:   lipgloss.Color("#59C2FF"),
+		Error:     lipgloss.Color("#F07178"),
+		StatusBar: lipgloss.Color("#CBCCC6"),
+	},
+	}
 
-var (
-	AppStyle        = lipgloss.NewStyle().Padding(1, 2)
-	TitleStyle      = lipgloss.NewStyle().Padding(0, 1)
-	PaneStyle       = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 1)
-	ListPaneStyle   = PaneStyle.Copy().Width(50)
+	var (
+	AppStyle       = lipgloss.NewStyle().Padding(1, 2)
+	TitleStyle     = lipgloss.NewStyle().Padding(0, 1)
+	PaneStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 1)
+	ListPaneStyle  = PaneStyle.Copy().Width(50)
 	DetailPaneStyle = PaneStyle.Copy().Padding(1, 2)
-	InfoTitleStyle  = lipgloss.NewStyle().Bold(true).MarginBottom(1)
-	InfoKeyStyle    = lipgloss.NewStyle().Bold(true)
-	ErrorStyle      = lipgloss.NewStyle().Bold(true)
-	StatusBarStyle  = lipgloss.NewStyle().MarginTop(1)
-)
+	InfoTitleStyle = lipgloss.NewStyle().Bold(true).MarginBottom(1)
+	InfoKeyStyle   = lipgloss.NewStyle().Bold(true)
+	ErrorStyle     = lipgloss.NewStyle().Bold(true)
+	StatusBarStyle = lipgloss.NewStyle().MarginTop(1)
+	)
 
-func ApplyTheme(themeName string) {
+	func ApplyTheme(themeName string) {
 	theme, ok := Themes[themeName]
 	if !ok {
-		theme = Themes["default"]
+		theme = Themes["ayu-dark"]
 	}
 
 	TitleStyle = TitleStyle.Background(theme.TitleBg).Foreground(theme.TitleFg)

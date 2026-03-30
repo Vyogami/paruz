@@ -15,7 +15,7 @@ type Config struct {
 var DefaultConfig = Config{
 	AURHelper:    "paru",
 	MirrorHelper: "rate-mirrors",
-	Theme:        "default",
+	Theme:        "ayu-dark",
 }
 
 func LoadConfig() Config {

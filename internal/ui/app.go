@@ -14,12 +14,24 @@ import (
 	"github.com/vyogami/paruz/internal/models"
 )
 
+type sessionState int
+
+const (
+	stateSearch sessionState = iota
+	stateSettings
+)
+
 type AppModel struct {
+	state       sessionState
 	list        list.Model
 	detailView  viewport.Model
 	searchInput textinput.Model
 	searching   bool
 	config      config.Config
+
+	// Settings State
+	settingsIndex int
+	settingsTotal int
 
 	// Data
 	packages    []models.Package
@@ -51,10 +63,13 @@ func InitialModel() *AppModel {
 	ti.Width = 40
 
 	m := &AppModel{
-		list:        l,
-		detailView:  dv,
-		searchInput: ti,
-		config:      cfg,
+		state:         stateSearch,
+		list:          l,
+		detailView:    dv,
+		searchInput:   ti,
+		config:        cfg,
+		settingsIndex: 0,
+		settingsTotal: 3, // AUR Helper, Mirror Helper, Theme
 	}
 	return m
 }
@@ -129,6 +144,46 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
+		if m.state == stateSettings {
+			switch msg.String() {
+			case "esc", "q":
+				m.state = stateSearch
+				return m, nil
+			case "j", "down":
+				m.settingsIndex = (m.settingsIndex + 1) % m.settingsTotal
+			case "k", "up":
+				m.settingsIndex = (m.settingsIndex - 1 + m.settingsTotal) % m.settingsTotal
+			case "enter", "l", "right":
+				switch m.settingsIndex {
+				case 0: // AUR Helper
+					if m.config.AURHelper == "paru" {
+						m.config.AURHelper = "yay"
+					} else {
+						m.config.AURHelper = "paru"
+					}
+				case 1: // Mirror Helper
+					if m.config.MirrorHelper == "rate-mirrors" {
+						m.config.MirrorHelper = "reflector"
+					} else {
+						m.config.MirrorHelper = "rate-mirrors"
+					}
+				case 2: // Theme
+					themesList := []string{"default", "dracula", "nord", "ayu-dark"}
+					currentIdx := 0
+					for i, t := range themesList {
+						if t == m.config.Theme {
+							currentIdx = i
+							break
+						}
+					}
+					m.config.Theme = themesList[(currentIdx+1)%len(themesList)]
+					ApplyTheme(m.config.Theme)
+				}
+				config.SaveConfig(m.config)
+			}
+			return m, nil
+		}
+
 		if m.searching {
 			switch msg.String() {
 			case "enter":
@@ -171,35 +226,9 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searching = true
 				m.searchInput.Focus()
 				return m, nil
-			case "t":
-				// Toggle Themes
-				if m.config.Theme == "default" {
-					m.config.Theme = "dracula"
-				} else if m.config.Theme == "dracula" {
-					m.config.Theme = "nord"
-				} else {
-					m.config.Theme = "default"
-				}
-				config.SaveConfig(m.config)
-				ApplyTheme(m.config.Theme)
-				return m, nil
-			case "h":
-				// Toggle AUR Helper
-				if m.config.AURHelper == "paru" {
-					m.config.AURHelper = "yay"
-				} else {
-					m.config.AURHelper = "paru"
-				}
-				config.SaveConfig(m.config)
-				return m, nil
-			case "m":
-				// Toggle Mirror Helper
-				if m.config.MirrorHelper == "rate-mirrors" {
-					m.config.MirrorHelper = "reflector"
-				} else {
-					m.config.MirrorHelper = "rate-mirrors"
-				}
-				config.SaveConfig(m.config)
+			case ",":
+				// Settings Screen
+				m.state = stateSettings
 				return m, nil
 			case "q":
 				return m, tea.Quit
@@ -250,8 +279,8 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errorMsg = msg.Error()
 	}
 
-	// Update list if not typing in our remote search
-	if !m.searching {
+	// Update list if not typing in our remote search and not in settings
+	if m.state == stateSearch && !m.searching {
 		prevIndex := m.list.Index()
 		m.list, cmd = m.list.Update(msg)
 		cmds = append(cmds, cmd)
@@ -272,7 +301,7 @@ func (m *AppModel) getSearchBar() string {
 	if m.searching {
 		return lipgloss.NewStyle().MarginBottom(1).Render(m.searchInput.View())
 	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("241")).MarginBottom(1).Render(fmt.Sprintf("Press '/' to search cache. [t] %s | [h] %s | [m] %s", m.config.Theme, m.config.AURHelper, m.config.MirrorHelper))
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("241")).MarginBottom(1).Render("Press '/' to search cache. [,] Settings | [q] Quit")
 }
 
 func (m *AppModel) updateSizes() {
@@ -311,6 +340,10 @@ func (m *AppModel) View() string {
 		return "Initializing..."
 	}
 
+	if m.state == stateSettings {
+		return m.settingsView()
+	}
+
 	listPane := ListPaneStyle.Render(m.list.View())
 
 	detailContent := m.detailView.View()
@@ -334,6 +367,32 @@ func (m *AppModel) View() string {
 	}
 
 	return AppStyle.Render(lipgloss.JoinVertical(lipgloss.Left, mainView, statusBar))
+}
+
+func (m *AppModel) settingsView() string {
+	title := TitleStyle.Render(" Settings ")
+	
+	options := []string{
+		fmt.Sprintf("AUR Helper:    %s", m.config.AURHelper),
+		fmt.Sprintf("Mirror Helper: %s", m.config.MirrorHelper),
+		fmt.Sprintf("Theme:         %s", m.config.Theme),
+	}
+
+	var content string
+	for i, opt := range options {
+		cursor := " "
+		if i == m.settingsIndex {
+			cursor = ">"
+			opt = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true).Render(opt)
+		}
+		content += fmt.Sprintf("%s %s\n", cursor, opt)
+	}
+
+	pane := PaneStyle.Copy().Width(m.width - 10).Height(m.height - 10).Render(content)
+	
+	footer := StatusBarStyle.Render("j/k: Navigate | Enter: Toggle/Change | Esc/q: Back")
+	
+	return AppStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, pane, footer))
 }
 
 var programRef *tea.Program
