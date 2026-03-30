@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/vyogami/paruz/internal/backend"
+	"github.com/vyogami/paruz/internal/config"
 	"github.com/vyogami/paruz/internal/models"
 )
 
@@ -18,6 +19,7 @@ type AppModel struct {
 	detailView  viewport.Model
 	searchInput textinput.Model
 	searching   bool
+	config      config.Config
 
 	// Data
 	packages    []models.Package
@@ -31,10 +33,15 @@ type AppModel struct {
 }
 
 func InitialModel() *AppModel {
+	cfg := config.LoadConfig()
+	ApplyTheme(cfg.Theme)
+
 	l := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
 	l.Title = "paruz (installed)"
 	l.SetShowStatusBar(false)
 	l.DisableQuitKeybindings()
+	// Disable default filter since we use our custom fuzzy search
+	l.SetFilteringEnabled(false)
 
 	dv := viewport.New(0, 0)
 
@@ -47,6 +54,7 @@ func InitialModel() *AppModel {
 		list:        l,
 		detailView:  dv,
 		searchInput: ti,
+		config:      cfg,
 	}
 	return m
 }
@@ -67,7 +75,7 @@ type packagesFetchedMsg struct {
 
 func (m *AppModel) fetchPackages(query string) tea.Cmd {
 	return func() tea.Msg {
-		pkgs, err := backend.SearchPackages(query)
+		pkgs, err := backend.SearchPackages(query, m.config.AURHelper)
 		return packagesFetchedMsg{packages: pkgs, err: err}
 	}
 }
@@ -79,7 +87,7 @@ type pkgInfoFetchedMsg struct {
 
 func (m *AppModel) fetchPkgInfo(pkgName string) tea.Cmd {
 	return func() tea.Msg {
-		info, err := backend.GetPackageInfo(pkgName)
+		info, err := backend.GetPackageInfo(pkgName, m.config.AURHelper)
 		return pkgInfoFetchedMsg{info: info, err: err}
 	}
 }
@@ -90,7 +98,7 @@ type execFinishedMsg struct {
 
 func (m *AppModel) runInstallCmd(pkgName string) tea.Cmd {
 	// Wrap in sh -c to allow pausing before returning to TUI
-	cmdStr := fmt.Sprintf("paru -S %s; echo '\n[Press any key to return to paruz...]'; read -n 1 -s -r", pkgName)
+	cmdStr := fmt.Sprintf("%s -S %s; echo '\n[Press any key to return to paruz...]'; read -n 1 -s -r", m.config.AURHelper, pkgName)
 	cmd := exec.Command("sh", "-c", cmdStr)
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		return execFinishedMsg{err: err}
@@ -98,7 +106,13 @@ func (m *AppModel) runInstallCmd(pkgName string) tea.Cmd {
 }
 
 func (m *AppModel) runMirrorUpdate() tea.Cmd {
-	cmdStr := "sudo rate-mirrors arch | sudo tee /etc/pacman.d/mirrorlist; echo '\n[Press any key to return to paruz...]'; read -n 1 -s -r"
+	var cmdStr string
+	if m.config.MirrorHelper == "reflector" {
+		cmdStr = "sudo reflector --latest 20 --protocol https --sort rate --save /etc/pacman.d/mirrorlist; echo '\n[Press any key to return to paruz...]'; read -n 1 -s -r"
+	} else {
+		// rate-mirrors should be run without sudo for fetching, but piped with sudo to tee.
+		cmdStr = "rate-mirrors arch | sudo tee /etc/pacman.d/mirrorlist; echo '\n[Press any key to return to paruz...]'; read -n 1 -s -r"
+	}
 	cmd := exec.Command("sh", "-c", cmdStr)
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		return execFinishedMsg{err: err}
@@ -125,15 +139,24 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					title = "installed"
 				}
 				m.list.Title = "paruz (" + title + ")"
-				return m, m.fetchPackages(m.searchInput.Value())
+				return m, nil // Already fetching while typing
 			case "esc":
 				m.searching = false
 				m.searchInput.Blur()
 				return m, nil
 			}
+
+			// Handle input and fetch immediately if changed
+			prevVal := m.searchInput.Value()
 			m.searchInput, cmd = m.searchInput.Update(msg)
-			return m, cmd
-		} else if m.list.FilterState() != list.Filtering {
+
+			var fetchCmd tea.Cmd
+			if m.searchInput.Value() != prevVal {
+				fetchCmd = m.fetchPackages(m.searchInput.Value())
+			}
+
+			return m, tea.Batch(cmd, fetchCmd)
+		} else {
 			switch msg.String() {
 			case "enter":
 				// Install selected
@@ -143,9 +166,40 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "u":
 				// Update Mirrors
 				return m, m.runMirrorUpdate()
-			case "s":
+			case "/", "s":
+				// Pressing / or s opens the search bar
 				m.searching = true
 				m.searchInput.Focus()
+				return m, nil
+			case "t":
+				// Toggle Themes
+				if m.config.Theme == "default" {
+					m.config.Theme = "dracula"
+				} else if m.config.Theme == "dracula" {
+					m.config.Theme = "nord"
+				} else {
+					m.config.Theme = "default"
+				}
+				config.SaveConfig(m.config)
+				ApplyTheme(m.config.Theme)
+				return m, nil
+			case "h":
+				// Toggle AUR Helper
+				if m.config.AURHelper == "paru" {
+					m.config.AURHelper = "yay"
+				} else {
+					m.config.AURHelper = "paru"
+				}
+				config.SaveConfig(m.config)
+				return m, nil
+			case "m":
+				// Toggle Mirror Helper
+				if m.config.MirrorHelper == "rate-mirrors" {
+					m.config.MirrorHelper = "reflector"
+				} else {
+					m.config.MirrorHelper = "rate-mirrors"
+				}
+				config.SaveConfig(m.config)
 				return m, nil
 			case "q":
 				return m, tea.Quit
@@ -191,8 +245,6 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Refresh UI dimensions since terminal might have been resized during exec
 		m.updateSizes()
-		// Redraw full alt screen might be needed, but bubbles handles it.
-		// If needed, can send a window size msg or clear screen.
 
 	case error:
 		m.errorMsg = msg.Error()
@@ -213,11 +265,6 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.searching {
-		m.searchInput, cmd = m.searchInput.Update(msg)
-		cmds = append(cmds, cmd)
-	}
-
 	return m, tea.Batch(cmds...)
 }
 
@@ -225,7 +272,7 @@ func (m *AppModel) getSearchBar() string {
 	if m.searching {
 		return lipgloss.NewStyle().MarginBottom(1).Render(m.searchInput.View())
 	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("241")).MarginBottom(1).Render("Press 's' to search AUR & Repos, '/' to filter local list.")
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("241")).MarginBottom(1).Render(fmt.Sprintf("Press '/' to search cache. [t] %s | [h] %s | [m] %s", m.config.Theme, m.config.AURHelper, m.config.MirrorHelper))
 }
 
 func (m *AppModel) updateSizes() {
@@ -281,7 +328,7 @@ func (m *AppModel) View() string {
 	if m.searching {
 		statusText = "Typing Search Query..."
 	}
-	statusBar := StatusBarStyle.Render(fmt.Sprintf("Status: %s | [Enter] Install  [u] Update Mirrors  [q] Quit", statusText))
+	statusBar := StatusBarStyle.Render(fmt.Sprintf("Status: %s | [Enter] Install  [u] Mirrors  [q] Quit", statusText))
 	if m.errorMsg != "" {
 		statusBar = StatusBarStyle.Render("Error: " + m.errorMsg)
 	}

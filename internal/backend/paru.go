@@ -58,13 +58,13 @@ func InitCache() {
 	}()
 }
 
-// SearchPackages runs `paru -Ss <query>` and parses the output into a list of Packages.
+// SearchPackages runs `<aurHelper> -Ss <query>` and parses the output into a list of Packages.
 // If query is empty, we can fetch installed packages or just return an empty list.
-func SearchPackages(query string) ([]models.Package, error) {
+func SearchPackages(query string, aurHelper string) ([]models.Package, error) {
 	if query == "" {
 		// If query is empty, let's just return a few basic packages or local ones.
-		// For now, we'll run `paru -Qs` to get installed packages.
-		cmd := exec.Command("paru", "-Qs")
+		// For now, we'll run `<aurHelper> -Qs` to get installed packages.
+		cmd := exec.Command(aurHelper, "-Qs")
 		out, err := cmd.Output()
 		if err != nil {
 			return nil, err
@@ -94,19 +94,19 @@ func SearchPackages(query string) ([]models.Package, error) {
 	}
 
 	// Fallback if cache not ready
-	cmd := exec.Command("paru", "-Ss", query)
+	cmd := exec.Command(aurHelper, "-Ss", query)
 	out, err := cmd.Output()
 	if err != nil {
-		// paru returns non-zero if nothing is found.
+		// returns non-zero if nothing is found.
 		return []models.Package{}, nil
 	}
 
 	return parseParuSearch(string(out)), nil
 }
 
-// GetPackageInfo runs `paru -Si <pkg>` and returns the raw string output.
-func GetPackageInfo(pkgName string) (string, error) {
-	cmd := exec.Command("paru", "-Si", pkgName)
+// GetPackageInfo runs `<aurHelper> -Si <pkg>` and returns the raw string output.
+func GetPackageInfo(pkgName string, aurHelper string) (string, error) {
+	cmd := exec.Command(aurHelper, "-Si", pkgName)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
