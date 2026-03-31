@@ -13,6 +13,9 @@ fi
 case "$ARCH" in
     x86_64) ARCH="x86_64" ;;
     aarch64|arm64) ARCH="arm64" ;;
+    i386|i686) ARCH="i386" ;;
+    armv6l) ARCH="armv6" ;;
+    armv7l) ARCH="armv7" ;;
     *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
 esac
 

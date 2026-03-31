@@ -36,6 +36,7 @@ type AppModel struct {
 	refreshingCache bool
 	config      config.Config
 	oldConfig   config.Config
+	version     string
 
 	// Bootstrap state
 	missingDeps []backend.Dependency
@@ -57,7 +58,7 @@ type AppModel struct {
 	height int
 }
 
-func InitialModel() *AppModel {
+func InitialModel(version string) *AppModel {
 	cfg := config.LoadConfig()
 	if cfg.AURHelper == "" {
 		cfg.AURHelper = "paru"
@@ -88,6 +89,7 @@ func InitialModel() *AppModel {
 		detailView:        dv,
 		searchInput:       ti,
 		config:            cfg,
+		version:           version,
 		settingsIndex:     0,
 		settingsTotal:     3, // AUR Helper, Mirror Helper, Theme
 		bootstrapSelected: make(map[int]bool),

@@ -8,8 +8,18 @@ import (
 	"github.com/vyogami/paruz/internal/ui"
 )
 
+var version = "v1.0.0"
+
 func main() {
-	m := ui.InitialModel()
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "v", "-v", "--version", "version":
+			fmt.Printf("paruz %s\n", version)
+			return
+		}
+	}
+
+	m := ui.InitialModel(version)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	ui.SetProgramRef(p)
 
