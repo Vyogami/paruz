@@ -688,7 +688,7 @@ func (m *AppModel) View() string {
 	}
 
 	shortcuts := fmt.Sprintf("%s Install  %s Update Mirrors  %s Quit",
-		keyColor.Render("[Enter]"),
+		keyColor.Render("[enter]"),
 		keyColor.Render("[u]"),
 		keyColor.Render("[q]"),
 	)
@@ -732,7 +732,7 @@ func (m *AppModel) bootstrapView() string {
 		content += fmt.Sprintf("%s%s %s - %s\n", cursor, checked, name, dep.Description)
 	}
 
-	content += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Press [Space] to toggle, [Enter] to install.")
+	content += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Press [space] to toggle, [enter] to install.")
 
 	// Use a more compact width for a dialog feel
 	dialogWidth := 60
@@ -745,10 +745,10 @@ func (m *AppModel) bootstrapView() string {
 
 	keyColor := lipgloss.NewStyle().Foreground(theme.InfoKey)
 	footerText := fmt.Sprintf("%s Navigate | %s Toggle | %s Install | %s Skip",
-		keyColor.Render("j/k:"),
-		keyColor.Render("Space:"),
-		keyColor.Render("Enter:"),
-		keyColor.Render("q:"),
+		keyColor.Render("[j/k]"),
+		keyColor.Render("[space]"),
+		keyColor.Render("[enter]"),
+		keyColor.Render("[q]"),
 	)
 	
 	pane := PaneStyle.Copy().Width(dialogWidth).Render(content)
@@ -788,9 +788,9 @@ func (m *AppModel) settingsView() string {
 
 	keyColor := lipgloss.NewStyle().Foreground(theme.InfoKey)
 	footerText := fmt.Sprintf("%s Navigate | %s Toggle | %s Back",
-		keyColor.Render("j/k:"),
-		keyColor.Render("Space:"),
-		keyColor.Render("Esc:"),
+		keyColor.Render("[j/k]"),
+		keyColor.Render("[space]"),
+		keyColor.Render("[esc]"),
 	)
 
 	pane := PaneStyle.Copy().Width(dialogWidth).Render(content)
