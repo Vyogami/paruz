@@ -2,8 +2,13 @@
 set -e
 
 # Detect OS and Architecture
-OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+OS=$(uname -s)
 ARCH=$(uname -m)
+
+if [ "$OS" != "Linux" ]; then
+    echo "Error: paruz is designed for Arch Linux and does not support $OS."
+    exit 1
+fi
 
 case "$ARCH" in
     x86_64) ARCH="x86_64" ;;
@@ -11,11 +16,7 @@ case "$ARCH" in
     *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
 esac
 
-case "$OS" in
-    linux) OS="Linux" ;;
-    darwin) OS="Darwin" ;;
-    *) echo "Unsupported OS: $OS"; exit 1 ;;
-esac
+OS="Linux"
 
 REPO="vyogami/paruz"
 # Get the latest release tag from GitHub API

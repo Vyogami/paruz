@@ -1,5 +1,7 @@
 # Paruz
 
+![screenshot](./screenshot.png)
+
 Paruz is a fast, Terminal User Interface (TUI) for Arch Linux that acts as a visual wrapper for the `paru` AUR helper.
 
 It allows you to:
@@ -12,7 +14,7 @@ It allows you to:
 
 Ensure you have `paru` (or `yay`) and (optionally) `rate-mirrors` installed on your system.
 
-### Quick Install (Linux & macOS)
+### Quick Install (Linux)
 
 Install the latest pre-built binary to `/usr/local/bin`:
 
