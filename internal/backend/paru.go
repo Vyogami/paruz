@@ -152,15 +152,28 @@ func SearchPackages(query string, aurHelper string) ([]models.Package, error) {
 	if ready {
 		cacheMutex.RLock()
 		defer cacheMutex.RUnlock()
-		fuzzyQuery := strings.ReplaceAll(query, " ", "")
-		matches := fuzzy.Find(fuzzyQuery, packageCache)
+		terms := strings.Fields(query)
+		currentMatches := packageCache
+
+		for _, term := range terms {
+			fuzzyMatches := fuzzy.Find(term, currentMatches)
+			var nextMatches []string
+			for _, match := range fuzzyMatches {
+				nextMatches = append(nextMatches, match.Str)
+			}
+			currentMatches = nextMatches
+			if len(currentMatches) == 0 {
+				break
+			}
+		}
+
 		var pkgs []models.Package
-		for i, match := range matches {
+		for i, matchStr := range currentMatches {
 			if i > 150 { // Limit to top 150 results for UI performance
 				break
 			}
 			pkgs = append(pkgs, models.Package{
-				Name: match.Str,
+				Name: matchStr,
 				Desc: "Press Enter to install, or scroll to view details.",
 			})
 		}
