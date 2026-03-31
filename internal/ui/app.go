@@ -21,6 +21,7 @@ const (
 	stateSearch sessionState = iota
 	stateSettings
 	stateConfirmSettings
+	stateBootstrap
 )
 
 type AppModel struct {
@@ -33,6 +34,10 @@ type AppModel struct {
 	refreshingCache bool
 	config      config.Config
 	oldConfig   config.Config
+
+	// Bootstrap state
+	missingDeps []backend.Dependency
+	bootstrapIdx int
 
 	// Settings State
 	settingsIndex int
@@ -83,6 +88,13 @@ func InitialModel() *AppModel {
 		settingsIndex: 0,
 		settingsTotal: 3, // AUR Helper, Mirror Helper, Theme
 	}
+
+	// Check dependencies
+	m.missingDeps = backend.GetMissingDependencies(cfg)
+	if len(m.missingDeps) > 0 {
+		m.state = stateBootstrap
+	}
+
 	m.updateTheme()
 	return m
 }
@@ -171,6 +183,20 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
+		}
+
+		if m.state == stateBootstrap {
+			switch msg.String() {
+			case "j", "down":
+				m.bootstrapIdx = (m.bootstrapIdx + 1) % len(m.missingDeps)
+			case "k", "up":
+				m.bootstrapIdx = (m.bootstrapIdx - 1 + len(m.missingDeps)) % len(m.missingDeps)
+			case "enter":
+				return m, backend.InstallDependencyCmd(m.missingDeps[m.bootstrapIdx])
+			case "q", "esc":
+				m.state = stateSearch
+			}
+			return m, nil
 		}
 
 		if m.state == stateSettings {
@@ -323,6 +349,21 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.detailView.SetContent(m.pkgInfo)
 
+	case backend.BootstrapFinishedMsg:
+		if msg.Err != nil {
+			m.errorMsg = fmt.Sprintf("Failed to install %s: %v", msg.Dependency.Name, msg.Err)
+		} else {
+			m.missingDeps = backend.GetMissingDependencies(m.config)
+			if len(m.missingDeps) == 0 {
+				m.state = stateSearch
+				return m, m.fetchPackages("") // Initial fetch after bootstrap
+			}
+			if m.bootstrapIdx >= len(m.missingDeps) {
+				m.bootstrapIdx = 0
+			}
+		}
+		m.updateSizes()
+
 	case backend.MirrorUpdateFinishedMsg:
 		if msg.Err != nil {
 			m.errorMsg = fmt.Sprintf("Mirror update failed: %v", msg.Err)
@@ -414,6 +455,10 @@ func (m *AppModel) View() string {
 		return "Initializing..."
 	}
 
+	if m.state == stateBootstrap {
+		return m.bootstrapView()
+	}
+
 	if m.state == stateSettings {
 		return m.settingsView()
 	}
@@ -456,6 +501,30 @@ func (m *AppModel) View() string {
 	}
 
 	return AppStyle.Render(lipgloss.JoinVertical(lipgloss.Left, mainView, statusBar))
+}
+
+func (m *AppModel) bootstrapView() string {
+	theme := Themes[m.config.Theme]
+	title := TitleStyle.Render(" Dependencies Setup ")
+	
+	content := "The following dependencies are missing for paruz to work correctly:\n\n"
+	for i, dep := range m.missingDeps {
+		cursor := " "
+		name := dep.Name
+		if i == m.bootstrapIdx {
+			cursor = ">"
+			name = lipgloss.NewStyle().Foreground(theme.InfoTitle).Bold(true).Render(name)
+		}
+		content += fmt.Sprintf("%s %s - %s\n", cursor, name, dep.Description)
+	}
+
+	content += "\nPress Enter to install the selected dependency."
+
+	pane := PaneStyle.Copy().Width(m.width - 10).Height(m.height - 10).Render(content)
+	
+	footer := StatusBarStyle.Render("j/k: Navigate | Enter: Install | q/Esc: Skip (some features might break)")
+	
+	return AppStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, pane, footer))
 }
 
 func (m *AppModel) settingsView() string {
