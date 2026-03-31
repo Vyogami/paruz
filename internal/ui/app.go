@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sort"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -22,6 +23,7 @@ const (
 	stateSettings
 	stateConfirmSettings
 	stateBootstrap
+	stateConfirmBootstrap
 )
 
 type AppModel struct {
@@ -38,6 +40,7 @@ type AppModel struct {
 	// Bootstrap state
 	missingDeps []backend.Dependency
 	bootstrapIdx int
+	bootstrapSelected map[int]bool
 
 	// Settings State
 	settingsIndex int
@@ -79,20 +82,31 @@ func InitialModel() *AppModel {
 	ti.Width = 40
 
 	m := &AppModel{
-		state:         stateSearch,
-		list:          l,
-		delegate:      d,
-		detailView:    dv,
-		searchInput:   ti,
-		config:        cfg,
-		settingsIndex: 0,
-		settingsTotal: 3, // AUR Helper, Mirror Helper, Theme
+		state:             stateSearch,
+		list:              l,
+		delegate:          d,
+		detailView:        dv,
+		searchInput:       ti,
+		config:            cfg,
+		settingsIndex:     0,
+		settingsTotal:     3, // AUR Helper, Mirror Helper, Theme
+		bootstrapSelected: make(map[int]bool),
 	}
 
 	// Check dependencies
 	m.missingDeps = backend.GetMissingDependencies(cfg)
 	if len(m.missingDeps) > 0 {
 		m.state = stateBootstrap
+		// Pre-select only essentials and recommended by default
+		for i, dep := range m.missingDeps {
+			if dep.Category == "System Essentials" || 
+			   dep.Name == "paru" || 
+			   dep.Name == "rate-mirrors" ||
+			   dep.Name == cfg.AURHelper ||
+			   dep.Name == cfg.MirrorHelper {
+				m.bootstrapSelected[i] = true
+			}
+		}
 	} else {
 		backend.InitCache()
 	}
@@ -193,13 +207,39 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.bootstrapIdx = (m.bootstrapIdx + 1) % len(m.missingDeps)
 			case "k", "up":
 				m.bootstrapIdx = (m.bootstrapIdx - 1 + len(m.missingDeps)) % len(m.missingDeps)
+			case " ":
+				m.bootstrapSelected[m.bootstrapIdx] = !m.bootstrapSelected[m.bootstrapIdx]
 			case "enter":
-				return m, backend.InstallDependencyCmd(m.missingDeps[m.bootstrapIdx])
+				var selectedDeps []backend.Dependency
+				for i, dep := range m.missingDeps {
+					if m.bootstrapSelected[i] {
+						selectedDeps = append(selectedDeps, dep)
+					}
+				}
+				if len(selectedDeps) > 0 {
+					m.state = stateConfirmBootstrap
+				}
 			case "q", "esc":
 				m.state = stateSearch
 				// Start cache init and fetch packages even if skipped
 				backend.InitCache()
 				return m, m.fetchPackages("")
+			}
+			return m, nil
+		}
+
+		if m.state == stateConfirmBootstrap {
+			switch msg.String() {
+			case "y", "Y":
+				var selectedDeps []backend.Dependency
+				for i, dep := range m.missingDeps {
+					if m.bootstrapSelected[i] {
+						selectedDeps = append(selectedDeps, dep)
+					}
+				}
+				return m, backend.InstallBatchCmd(selectedDeps)
+			case "n", "N", "esc", "q":
+				m.state = stateBootstrap
 			}
 			return m, nil
 		}
@@ -354,16 +394,27 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.detailView.SetContent(m.pkgInfo)
 
-	case backend.BootstrapFinishedMsg:
+	case backend.BatchBootstrapFinishedMsg:
 		if msg.Err != nil {
-			m.errorMsg = fmt.Sprintf("Failed to install %s: %v", msg.Dependency.Name, msg.Err)
+			m.errorMsg = fmt.Sprintf("Installation failed: %v", msg.Err)
 		} else {
+			// Update config if we installed a tool that wasn't previously selected
+			// or if the selected one is now available.
+			for _, dep := range msg.Deps {
+				if (dep.Name == "paru" || dep.Name == "yay") && !backend.CheckDependency(m.config.AURHelper) {
+					m.config.AURHelper = dep.Name
+				}
+				if (dep.Name == "reflector" || dep.Name == "rate-mirrors") && !backend.CheckDependency(m.config.MirrorHelper) {
+					m.config.MirrorHelper = dep.Name
+				}
+			}
+			config.SaveConfig(m.config)
+
 			m.missingDeps = backend.GetMissingDependencies(m.config)
 			if len(m.missingDeps) == 0 {
 				m.state = stateSearch
-				// Start cache init and fetch packages now that deps are installed
 				backend.InitCache()
-				return m, m.fetchPackages("") // Initial fetch after bootstrap
+				return m, m.fetchPackages("")
 			}
 			if m.bootstrapIdx >= len(m.missingDeps) {
 				m.bootstrapIdx = 0
@@ -466,6 +517,31 @@ func (m *AppModel) View() string {
 		return m.bootstrapView()
 	}
 
+	if m.state == stateConfirmBootstrap {
+		title := TitleStyle.Render(" Install Dependencies? ")
+		var selected []string
+		for i, dep := range m.missingDeps {
+			if m.bootstrapSelected[i] {
+				selected = append(selected, dep.Name)
+			}
+		}
+		
+		selectedText := strings.Join(selected, ", ")
+		if len(selectedText) > 40 {
+			selectedText = selectedText[:37] + "..."
+		}
+		
+		content := fmt.Sprintf("Install %d selected items?\n(%s)\n\n[y] Yes  [n] No", len(selected), selectedText)
+		pane := PaneStyle.Copy().
+			Width(50).
+			Height(7).
+			Align(lipgloss.Center).
+			Render(content)
+		
+		dialog := lipgloss.JoinVertical(lipgloss.Center, title, pane)
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialog)
+	}
+
 	if m.state == stateSettings {
 		return m.settingsView()
 	}
@@ -478,10 +554,11 @@ func (m *AppModel) View() string {
 			Height(5).
 			Align(lipgloss.Center).
 			Render(content)
-		
+
 		dialog := lipgloss.JoinVertical(lipgloss.Center, title, pane)
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialog)
 	}
+
 
 	listPane := ListPaneStyle.Render(m.list.View())
 
@@ -514,24 +591,49 @@ func (m *AppModel) bootstrapView() string {
 	theme := Themes[m.config.Theme]
 	title := TitleStyle.Render(" Dependencies Setup ")
 	
-	content := "The following dependencies are missing for paruz to work correctly:\n\n"
+	var content string
+	lastCategory := ""
+	
 	for i, dep := range m.missingDeps {
-		cursor := " "
+		if dep.Category != lastCategory {
+			if content != "" {
+				content += "\n"
+			}
+			content += lipgloss.NewStyle().Foreground(theme.InfoKey).Bold(true).Underline(true).Render(dep.Category) + "\n"
+			lastCategory = dep.Category
+		}
+
+		cursor := "  "
+		checked := lipgloss.NewStyle().Foreground(theme.Error).Render("✘")
+		if m.bootstrapSelected[i] {
+			checked = lipgloss.NewStyle().Foreground(theme.TitleBg).Render("✔")
+		}
+		
 		name := dep.Name
 		if i == m.bootstrapIdx {
-			cursor = ">"
+			cursor = lipgloss.NewStyle().Foreground(theme.TitleBg).Render("> ")
 			name = lipgloss.NewStyle().Foreground(theme.InfoTitle).Bold(true).Render(name)
 		}
-		content += fmt.Sprintf("%s %s - %s\n", cursor, name, dep.Description)
+		
+		content += fmt.Sprintf("%s%s %s - %s\n", cursor, checked, name, dep.Description)
 	}
 
-	content += "\nPress Enter to install the selected dependency."
+	content += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Press [Space] to toggle, [Enter] to install.")
 
-	pane := PaneStyle.Copy().Width(m.width - 10).Height(m.height - 10).Render(content)
+	// Use a more compact width for a dialog feel
+	dialogWidth := 60
+	if m.width-10 < dialogWidth {
+		dialogWidth = m.width - 10
+	}
+	if dialogWidth < 0 {
+		dialogWidth = 0
+	}
+
+	pane := PaneStyle.Copy().Width(dialogWidth).Render(content)
+	footer := StatusBarStyle.Render("j/k: Navigate | Space: Toggle | Enter: Install | q: Skip")
 	
-	footer := StatusBarStyle.Render("j/k: Navigate | Enter: Install | q/Esc: Skip (some features might break)")
-	
-	return AppStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, pane, footer))
+	dialog := lipgloss.JoinVertical(lipgloss.Center, title, pane, footer)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialog)
 }
 
 func (m *AppModel) settingsView() string {
@@ -546,19 +648,27 @@ func (m *AppModel) settingsView() string {
 
 	var content string
 	for i, opt := range options {
-		cursor := " "
+		cursor := "  "
 		if i == m.settingsIndex {
-			cursor = ">"
+			cursor = lipgloss.NewStyle().Foreground(theme.TitleBg).Render("> ")
 			opt = lipgloss.NewStyle().Foreground(theme.InfoTitle).Bold(true).Render(opt)
 		}
 		content += fmt.Sprintf("%s %s\n", cursor, opt)
 	}
 
-	pane := PaneStyle.Copy().Width(m.width - 10).Height(m.height - 10).Render(content)
+	dialogWidth := 60
+	if m.width-10 < dialogWidth {
+		dialogWidth = m.width - 10
+	}
+	if dialogWidth < 0 {
+		dialogWidth = 0
+	}
+
+	pane := PaneStyle.Copy().Width(dialogWidth).Render(content)
+	footer := StatusBarStyle.Render("j/k: Navigate | Space: Toggle | Esc: Back")
 	
-	footer := StatusBarStyle.Render("j/k: Navigate | Space: Toggle/Change | Esc/q: Exit")
-	
-	return AppStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, pane, footer))
+	dialog := lipgloss.JoinVertical(lipgloss.Center, title, pane, footer)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialog)
 }
 
 var programRef *tea.Program

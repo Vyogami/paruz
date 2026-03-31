@@ -5,7 +5,6 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/vyogami/paruz/internal/backend"
 	"github.com/vyogami/paruz/internal/ui"
 )
 
