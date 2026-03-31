@@ -10,8 +10,6 @@ import (
 )
 
 func main() {
-	backend.InitCache()
-
 	m := ui.InitialModel()
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	ui.SetProgramRef(p)

@@ -93,6 +93,8 @@ func InitialModel() *AppModel {
 	m.missingDeps = backend.GetMissingDependencies(cfg)
 	if len(m.missingDeps) > 0 {
 		m.state = stateBootstrap
+	} else {
+		backend.InitCache()
 	}
 
 	m.updateTheme()
@@ -195,6 +197,9 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, backend.InstallDependencyCmd(m.missingDeps[m.bootstrapIdx])
 			case "q", "esc":
 				m.state = stateSearch
+				// Start cache init and fetch packages even if skipped
+				backend.InitCache()
+				return m, m.fetchPackages("")
 			}
 			return m, nil
 		}
@@ -356,6 +361,8 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.missingDeps = backend.GetMissingDependencies(m.config)
 			if len(m.missingDeps) == 0 {
 				m.state = stateSearch
+				// Start cache init and fetch packages now that deps are installed
+				backend.InitCache()
 				return m, m.fetchPackages("") // Initial fetch after bootstrap
 			}
 			if m.bootstrapIdx >= len(m.missingDeps) {
