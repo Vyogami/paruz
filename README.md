@@ -10,7 +10,17 @@ It allows you to:
 
 ## Installation
 
-Ensure you have Go, `paru`, and (optionally) `rate-mirrors` installed on your system.
+Ensure you have `paru` (or `yay`) and (optionally) `rate-mirrors` installed on your system.
+
+### Quick Install (Linux & macOS)
+
+Install the latest pre-built binary to `/usr/local/bin`:
+
+```bash
+curl -sL https://raw.githubusercontent.com/vyogami/paruz/main/install.sh | sudo sh
+```
+
+### Build from Source
 
 ```bash
 git clone https://github.com/vyogami/paruz
