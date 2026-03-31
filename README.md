@@ -76,3 +76,9 @@ After adding a theme to `themes.toml`, it will appear in the settings menu (pres
 ## Technical Details
 
 Paruz is built in Go using the incredible [Charmbracelet](https://charm.sh/) ecosystem (`bubbletea`, `bubbles`, `lipgloss`). It integrates with `creack/pty` to provide a pseudo-terminal specifically for rendering `paru` output inside the TUI viewport while correctly forwarding user inputs (like typing `y` for `PKGBUILD` reviews).
+
+## Inspiration
+
+This project is inspired by the original [paruz](https://github.com/joehillen/paruz) by Joe Hillen. However, that project has been abandoned and its source code is no longer available on GitHub. 
+
+While the original `paruz` was a simple script that used `fzf` to provide a selection interface for `paru`, this version of **Paruz** is a complete, standalone TUI built from the ground up using **Bubble Tea**. It provides a richer, more interactive experience with features like live package inspection, system-wide mirror updates, and dynamic theming.
