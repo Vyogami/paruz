@@ -20,15 +20,18 @@ type sessionState int
 const (
 	stateSearch sessionState = iota
 	stateSettings
+	stateConfirmSettings
 )
 
 type AppModel struct {
 	state       sessionState
 	list        list.Model
+	delegate    list.DefaultDelegate
 	detailView  viewport.Model
 	searchInput textinput.Model
 	searching   bool
 	config      config.Config
+	oldConfig   config.Config
 
 	// Settings State
 	settingsIndex int
@@ -54,7 +57,8 @@ func InitialModel() *AppModel {
 	// Load custom themes
 	MergeCustomThemes(config.LoadCustomThemes())
 
-	l := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	d := list.NewDefaultDelegate()
+	l := list.New([]list.Item{}, d, 0, 0)
 	l.Title = "paruz (installed)"
 	l.SetShowStatusBar(false)
 	l.DisableQuitKeybindings()
@@ -71,6 +75,7 @@ func InitialModel() *AppModel {
 	m := &AppModel{
 		state:         stateSearch,
 		list:          l,
+		delegate:      d,
 		detailView:    dv,
 		searchInput:   ti,
 		config:        cfg,
@@ -92,17 +97,15 @@ func (m *AppModel) updateTheme() {
 	m.list.Styles.Title = TitleStyle
 	m.list.Styles.ActivePaginationDot = lipgloss.NewStyle().Foreground(theme.InfoKey)
 
-	// Update delegate styles for selection safely
-	if d, ok := m.list.Delegate().(list.DefaultDelegate); ok {
-		d.Styles.SelectedTitle = lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder(), false, false, false, true).
-			BorderForeground(theme.TitleBg).
-			Foreground(theme.TitleBg).
-			Padding(0, 0, 0, 1)
-		d.Styles.SelectedDesc = d.Styles.SelectedTitle.Copy().
-			Foreground(lipgloss.Color("241"))
-		m.list.SetDelegate(d)
-	}
+	// Update delegate styles for selection
+	m.delegate.Styles.SelectedTitle = lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder(), false, false, false, true).
+		BorderForeground(theme.TitleBg).
+		Foreground(theme.TitleBg).
+		Padding(0, 0, 0, 1)
+	m.delegate.Styles.SelectedDesc = m.delegate.Styles.SelectedTitle.Copy().
+		Foreground(lipgloss.Color("241"))
+	m.list.SetDelegate(m.delegate)
 
 	// Update text input styles
 	m.searchInput.PromptStyle = lipgloss.NewStyle().Foreground(theme.InfoKey)
@@ -182,13 +185,17 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == stateSettings {
 			switch msg.String() {
 			case "esc", "q":
-				m.state = stateSearch
+				if m.config != m.oldConfig {
+					m.state = stateConfirmSettings
+				} else {
+					m.state = stateSearch
+				}
 				return m, nil
 			case "j", "down":
 				m.settingsIndex = (m.settingsIndex + 1) % m.settingsTotal
 			case "k", "up":
 				m.settingsIndex = (m.settingsIndex - 1 + m.settingsTotal) % m.settingsTotal
-			case "enter", "l", "right":
+			case " ", "enter", "l", "right":
 				switch m.settingsIndex {
 				case 0: // AUR Helper
 					if m.config.AURHelper == "paru" {
@@ -220,7 +227,20 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.config.Theme = themesList[(currentIdx+1)%len(themesList)]
 					m.updateTheme()
 				}
+				// Don't save yet, wait for exit confirmation
+			}
+			return m, nil
+		}
+
+		if m.state == stateConfirmSettings {
+			switch msg.String() {
+			case "y", "Y", "enter":
 				config.SaveConfig(m.config)
+				m.state = stateSearch
+			case "n", "N", "esc", "q":
+				m.config = m.oldConfig
+				m.updateTheme()
+				m.state = stateSearch
 			}
 			return m, nil
 		}
@@ -269,6 +289,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case ",":
 				// Settings Screen
+				m.oldConfig = m.config
 				m.state = stateSettings
 				return m, nil
 			case "q":
@@ -386,6 +407,19 @@ func (m *AppModel) View() string {
 		return m.settingsView()
 	}
 
+	if m.state == stateConfirmSettings {
+		title := TitleStyle.Render(" Save Changes? ")
+		content := "You have unsaved changes. Do you want to save them?\n\n[y] Yes  [n] No"
+		pane := PaneStyle.Copy().
+			Width(40).
+			Height(5).
+			Align(lipgloss.Center).
+			Render(content)
+		
+		dialog := lipgloss.JoinVertical(lipgloss.Center, title, pane)
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialog)
+	}
+
 	listPane := ListPaneStyle.Render(m.list.View())
 
 	detailContent := m.detailView.View()
@@ -433,7 +467,7 @@ func (m *AppModel) settingsView() string {
 
 	pane := PaneStyle.Copy().Width(m.width - 10).Height(m.height - 10).Render(content)
 	
-	footer := StatusBarStyle.Render("j/k: Navigate | Enter: Toggle/Change | Esc/q: Back")
+	footer := StatusBarStyle.Render("j/k: Navigate | Space: Toggle/Change | Esc/q: Exit")
 	
 	return AppStyle.Render(lipgloss.JoinVertical(lipgloss.Left, title, pane, footer))
 }
