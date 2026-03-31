@@ -69,7 +69,7 @@ var Themes = map[string]Theme{
 }
 
 var (
-	AppStyle        = lipgloss.NewStyle().Padding(1, 2)
+	AppStyle        = lipgloss.NewStyle().Padding(1, 0)
 	TitleStyle      lipgloss.Style
 	PaneStyle       lipgloss.Style
 	ListPaneStyle   lipgloss.Style

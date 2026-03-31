@@ -654,11 +654,17 @@ func (m *AppModel) View() string {
 	keyColor := lipgloss.NewStyle().Foreground(theme.InfoKey)
 	
 	statusLabel := statusColor.Render("Status:")
-	statusText := "Ready"
+	tickView := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("✓") + " "
+
+	statusText := fmt.Sprintf("Ready %s", tickView)
 	if m.searching {
-		statusText = "Typing Search Query..."
+		spinnerView := tickView
+		if m.fetching {
+			spinnerView = m.spinner.View()
+		}
+		statusText = fmt.Sprintf("Typing Search Query %s", spinnerView)
 	} else if m.refreshingCache {
-		statusText = "Refreshing Cache... " + m.spinner.View()
+		statusText = fmt.Sprintf("Refreshing Cache %s", m.spinner.View())
 	}
 
 	shortcuts := fmt.Sprintf("%s Install  %s Update Mirrors  %s Quit",
