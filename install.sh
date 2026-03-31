@@ -26,8 +26,8 @@ REPO="vyogami/paruz"
 LATEST_TAG=$(curl -s https://api.github.com/repos/$REPO/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 
 if [ -z "$LATEST_TAG" ]; then
-    echo "Could not fetch latest release tag. Falling back to v1.0.1"
-    LATEST_TAG="v1.0.1"
+    echo "Could not fetch latest release tag. Falling back to v1.1.0-alpha"
+    LATEST_TAG="v1.1.0-alpha"
 fi
 
 # Clean 'v' from tag if present for the filename part (GoReleaser format)
