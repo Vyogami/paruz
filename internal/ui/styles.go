@@ -1,6 +1,9 @@
 package ui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/lipgloss"
+	"github.com/vyogami/paruz/internal/config"
+)
 
 type Theme struct {
 	TitleBg   lipgloss.Color
@@ -10,6 +13,20 @@ type Theme struct {
 	InfoKey   lipgloss.Color
 	Error     lipgloss.Color
 	StatusBar lipgloss.Color
+}
+
+func MergeCustomThemes(customThemes map[string]config.CustomTheme) {
+	for name, ct := range customThemes {
+		Themes[name] = Theme{
+			TitleBg:   lipgloss.Color(ct.TitleBg),
+			TitleFg:   lipgloss.Color(ct.TitleFg),
+			Border:    lipgloss.Color(ct.Border),
+			InfoTitle: lipgloss.Color(ct.InfoTitle),
+			InfoKey:   lipgloss.Color(ct.InfoKey),
+			Error:     lipgloss.Color(ct.Error),
+			StatusBar: lipgloss.Color(ct.StatusBar),
+		}
+	}
 }
 
 var Themes = map[string]Theme{

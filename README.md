@@ -29,8 +29,36 @@ Run the compiled binary:
 - **`/`**: Start filtering/searching packages
 - **`Enter`**: Install the selected package
 - **`u`**: Update mirrorlist (requires `rate-mirrors` and `sudo`)
+- **`,`**: Open settings menu
 - **`Esc`**: Exit terminal execution or clear search
 - **`q`**: Quit the application
+
+## Configuration
+
+Paruz stores its configuration in `~/.config/paruz/config.toml`.
+
+### `config.toml`
+```toml
+aur_helper = "paru"      # paru or yay
+mirror_helper = "rate-mirrors" # rate-mirrors or reflector
+theme = "ayu-dark"       # default theme name
+```
+
+### Custom Themes
+You can add your own themes by creating `~/.config/paruz/themes.toml`:
+
+```toml
+[themes.my-cool-theme]
+title_bg = "#ff00ff"
+title_fg = "#ffffff"
+border = "#6272a4"
+info_title = "#ff79c6"
+info_key = "#8be9fd"
+error = "#ff5555"
+status_bar = "#f8f8f2"
+```
+
+After adding a theme to `themes.toml`, it will appear in the settings menu (press `,`).
 
 ## Technical Details
 

@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os/exec"
+	"sort"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -46,6 +47,12 @@ type AppModel struct {
 
 func InitialModel() *AppModel {
 	cfg := config.LoadConfig()
+	if cfg.AURHelper == "" {
+		cfg.AURHelper = "paru"
+	}
+
+	// Load custom themes
+	MergeCustomThemes(config.LoadCustomThemes())
 
 	l := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
 	l.Title = "paruz (installed)"
@@ -76,22 +83,26 @@ func InitialModel() *AppModel {
 
 func (m *AppModel) updateTheme() {
 	ApplyTheme(m.config.Theme)
-	theme := Themes[m.config.Theme]
+	theme, ok := Themes[m.config.Theme]
+	if !ok {
+		theme = Themes["ayu-dark"]
+	}
 
 	// Update list styles
 	m.list.Styles.Title = TitleStyle
 	m.list.Styles.ActivePaginationDot = lipgloss.NewStyle().Foreground(theme.InfoKey)
 
-	// Update delegate styles for selection
-	d := list.NewDefaultDelegate()
-	d.Styles.SelectedTitle = lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), false, false, false, true).
-		BorderForeground(theme.TitleBg).
-		Foreground(theme.TitleBg).
-		Padding(0, 0, 0, 1)
-	d.Styles.SelectedDesc = d.Styles.SelectedTitle.Copy().
-		Foreground(lipgloss.Color("241"))
-	m.list.SetDelegate(d)
+	// Update delegate styles for selection safely
+	if d, ok := m.list.Delegate().(list.DefaultDelegate); ok {
+		d.Styles.SelectedTitle = lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder(), false, false, false, true).
+			BorderForeground(theme.TitleBg).
+			Foreground(theme.TitleBg).
+			Padding(0, 0, 0, 1)
+		d.Styles.SelectedDesc = d.Styles.SelectedTitle.Copy().
+			Foreground(lipgloss.Color("241"))
+		m.list.SetDelegate(d)
+	}
 
 	// Update text input styles
 	m.searchInput.PromptStyle = lipgloss.NewStyle().Foreground(theme.InfoKey)
@@ -192,7 +203,13 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.config.MirrorHelper = "rate-mirrors"
 					}
 				case 2: // Theme
-					themesList := []string{"default", "dracula", "nord", "ayu-dark"}
+					var themesList []string
+					for k := range Themes {
+						themesList = append(themesList, k)
+					}
+					// Sort to have consistent order
+					sort.Strings(themesList)
+
 					currentIdx := 0
 					for i, t := range themesList {
 						if t == m.config.Theme {
