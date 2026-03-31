@@ -46,7 +46,6 @@ type AppModel struct {
 
 func InitialModel() *AppModel {
 	cfg := config.LoadConfig()
-	ApplyTheme(cfg.Theme)
 
 	l := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
 	l.Title = "paruz (installed)"
@@ -71,7 +70,32 @@ func InitialModel() *AppModel {
 		settingsIndex: 0,
 		settingsTotal: 3, // AUR Helper, Mirror Helper, Theme
 	}
+	m.updateTheme()
 	return m
+}
+
+func (m *AppModel) updateTheme() {
+	ApplyTheme(m.config.Theme)
+	theme := Themes[m.config.Theme]
+
+	// Update list styles
+	m.list.Styles.Title = TitleStyle
+	m.list.Styles.ActivePaginationDot = lipgloss.NewStyle().Foreground(theme.InfoKey)
+
+	// Update delegate styles for selection
+	d := list.NewDefaultDelegate()
+	d.Styles.SelectedTitle = lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder(), false, false, false, true).
+		BorderForeground(theme.TitleBg).
+		Foreground(theme.TitleBg).
+		Padding(0, 0, 0, 1)
+	d.Styles.SelectedDesc = d.Styles.SelectedTitle.Copy().
+		Foreground(lipgloss.Color("241"))
+	m.list.SetDelegate(d)
+
+	// Update text input styles
+	m.searchInput.PromptStyle = lipgloss.NewStyle().Foreground(theme.InfoKey)
+	m.searchInput.TextStyle = lipgloss.NewStyle().Foreground(theme.InfoKey)
 }
 
 func (m *AppModel) Init() tea.Cmd {
@@ -177,7 +201,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 					m.config.Theme = themesList[(currentIdx+1)%len(themesList)]
-					ApplyTheme(m.config.Theme)
+					m.updateTheme()
 				}
 				config.SaveConfig(m.config)
 			}
@@ -298,10 +322,11 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *AppModel) getSearchBar() string {
+	theme := Themes[m.config.Theme]
 	if m.searching {
 		return lipgloss.NewStyle().MarginBottom(1).Render(m.searchInput.View())
 	}
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("241")).MarginBottom(1).Render("Press '/' to search cache. [,] Settings | [q] Quit")
+	return lipgloss.NewStyle().Foreground(theme.StatusBar).MarginBottom(1).Render("Press '/' to search cache. [,] Settings | [q] Quit")
 }
 
 func (m *AppModel) updateSizes() {
@@ -370,6 +395,7 @@ func (m *AppModel) View() string {
 }
 
 func (m *AppModel) settingsView() string {
+	theme := Themes[m.config.Theme]
 	title := TitleStyle.Render(" Settings ")
 	
 	options := []string{
@@ -383,7 +409,7 @@ func (m *AppModel) settingsView() string {
 		cursor := " "
 		if i == m.settingsIndex {
 			cursor = ">"
-			opt = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true).Render(opt)
+			opt = lipgloss.NewStyle().Foreground(theme.InfoTitle).Bold(true).Render(opt)
 		}
 		content += fmt.Sprintf("%s %s\n", cursor, opt)
 	}

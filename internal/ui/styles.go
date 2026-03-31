@@ -49,32 +49,54 @@ var Themes = map[string]Theme{
 		Error:     lipgloss.Color("#F07178"),
 		StatusBar: lipgloss.Color("#CBCCC6"),
 	},
-	}
+}
 
-	var (
-	AppStyle       = lipgloss.NewStyle().Padding(1, 2)
-	TitleStyle     = lipgloss.NewStyle().Padding(0, 1)
-	PaneStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 1)
-	ListPaneStyle  = PaneStyle.Copy().Width(50)
-	DetailPaneStyle = PaneStyle.Copy().Padding(1, 2)
-	InfoTitleStyle = lipgloss.NewStyle().Bold(true).MarginBottom(1)
-	InfoKeyStyle   = lipgloss.NewStyle().Bold(true)
-	ErrorStyle     = lipgloss.NewStyle().Bold(true)
-	StatusBarStyle = lipgloss.NewStyle().MarginTop(1)
-	)
+var (
+	AppStyle        = lipgloss.NewStyle().Padding(1, 2)
+	TitleStyle      lipgloss.Style
+	PaneStyle       lipgloss.Style
+	ListPaneStyle   lipgloss.Style
+	DetailPaneStyle lipgloss.Style
+	InfoTitleStyle  lipgloss.Style
+	InfoKeyStyle    lipgloss.Style
+	ErrorStyle      lipgloss.Style
+	StatusBarStyle  lipgloss.Style
+)
 
-	func ApplyTheme(themeName string) {
+func ApplyTheme(themeName string) {
 	theme, ok := Themes[themeName]
 	if !ok {
 		theme = Themes["ayu-dark"]
 	}
 
-	TitleStyle = TitleStyle.Background(theme.TitleBg).Foreground(theme.TitleFg)
-	PaneStyle = PaneStyle.BorderForeground(theme.Border)
-	ListPaneStyle = ListPaneStyle.BorderForeground(theme.Border)
-	DetailPaneStyle = DetailPaneStyle.BorderForeground(theme.Border)
-	InfoTitleStyle = InfoTitleStyle.Foreground(theme.InfoTitle)
-	InfoKeyStyle = InfoKeyStyle.Foreground(theme.InfoKey)
-	ErrorStyle = ErrorStyle.Foreground(theme.Error)
-	StatusBarStyle = StatusBarStyle.Foreground(theme.StatusBar)
+	TitleStyle = lipgloss.NewStyle().
+		Padding(0, 1).
+		Background(theme.TitleBg).
+		Foreground(theme.TitleFg)
+
+	PaneStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.Border).
+		Padding(1, 1)
+
+	ListPaneStyle = PaneStyle.Copy().Width(50)
+
+	DetailPaneStyle = PaneStyle.Copy().Padding(1, 2)
+
+	InfoTitleStyle = lipgloss.NewStyle().
+		Bold(true).
+		MarginBottom(1).
+		Foreground(theme.InfoTitle)
+
+	InfoKeyStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(theme.InfoKey)
+
+	ErrorStyle = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(theme.Error)
+
+	StatusBarStyle = lipgloss.NewStyle().
+		MarginTop(1).
+		Foreground(theme.StatusBar)
 }
