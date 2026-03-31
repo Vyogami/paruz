@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -36,6 +37,7 @@ type AppModel struct {
 	searchInput textinput.Model
 	spinner     spinner.Model
 	searching   bool
+	fetching    bool
 	refreshingCache bool
 	config      config.Config
 	oldConfig   config.Config
@@ -160,11 +162,8 @@ func (m *AppModel) Init() tea.Cmd {
 		tea.EnterAltScreen,
 		textinput.Blink,
 		m.fetchPackages(""), // initial fetch
+		m.spinner.Tick,
 	)
-	
-	if m.state == stateBuildingCache {
-		cmds = append(cmds, m.spinner.Tick)
-	}
 	
 	if len(m.missingDeps) == 0 {
 		m.refreshingCache = true
@@ -175,6 +174,14 @@ func (m *AppModel) Init() tea.Cmd {
 }
 
 // Commands
+type stopFetchingMsg struct{}
+
+func stopFetchingCmd() tea.Cmd {
+	return tea.Tick(300*time.Millisecond, func(_ time.Time) tea.Msg {
+		return stopFetchingMsg{}
+	})
+}
+
 type packagesFetchedMsg struct {
 	query    string
 	packages []models.Package
@@ -365,6 +372,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			var fetchCmd tea.Cmd
 			if m.searchInput.Value() != prevVal {
+				m.fetching = true
 				fetchCmd = m.fetchPackages(m.searchInput.Value())
 			}
 
@@ -404,19 +412,22 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateSizes()
 
 	case spinner.TickMsg:
-		if m.state == stateBuildingCache {
-			var cmd tea.Cmd
-			m.spinner, cmd = m.spinner.Update(msg)
-			return m, cmd
-		}
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+
+	case stopFetchingMsg:
+		m.fetching = false
+		return m, nil
 
 	case packagesFetchedMsg:
 		if msg.query != m.searchInput.Value() {
 			return m, nil
 		}
-		
-		if msg.err != nil {
-			m.errorMsg = msg.err.Error()
+
+		cmds = append(cmds, stopFetchingCmd())
+
+		if msg.err != nil {			m.errorMsg = msg.err.Error()
 		} else {
 			items := make([]list.Item, len(msg.packages))
 			for i, p := range msg.packages {
@@ -494,9 +505,11 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errorMsg = ""
 		if m.state == stateBuildingCache {
 			m.state = stateSearch
+			m.fetching = true
 			cmds = append(cmds, m.fetchPackages(m.searchInput.Value()))
 		} else if m.searchInput.Value() != "" {
 			// If searching, trigger a new search to use the fresh cache
+			m.fetching = true
 			cmds = append(cmds, m.fetchPackages(m.searchInput.Value()))
 		}
 	}
@@ -636,13 +649,25 @@ func (m *AppModel) View() string {
 		lipgloss.JoinHorizontal(lipgloss.Top, listPane, detailContent),
 	)
 
+	theme := Themes[m.config.Theme]
+	statusColor := lipgloss.NewStyle().Foreground(theme.InfoKey).Bold(true)
+	keyColor := lipgloss.NewStyle().Foreground(theme.InfoKey)
+	
+	statusLabel := statusColor.Render("Status:")
 	statusText := "Ready"
 	if m.searching {
 		statusText = "Typing Search Query..."
 	} else if m.refreshingCache {
-		statusText = "Refreshing Cache..."
+		statusText = "Refreshing Cache... " + m.spinner.View()
 	}
-	statusBar := StatusBarStyle.Render(fmt.Sprintf("Status: %s | [Enter] Install  [u] Mirrors  [q] Quit", statusText))
+
+	shortcuts := fmt.Sprintf("%s Install  %s Update Mirrors  %s Quit",
+		keyColor.Render("[Enter]"),
+		keyColor.Render("[u]"),
+		keyColor.Render("[q]"),
+	)
+
+	statusBar := StatusBarStyle.Render(fmt.Sprintf("%s %s | %s", statusLabel, statusText, shortcuts))
 	if m.errorMsg != "" {
 		statusBar = StatusBarStyle.Render("Error: " + m.errorMsg)
 	}
