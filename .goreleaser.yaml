@@ -1,8 +1,10 @@
-# This is a GoReleaser configuration file.
-# See http://goreleaser.com for more information.
+# GoReleaser configuration for paruz
+version: 2
+
 before:
   hooks:
     - go mod tidy
+
 builds:
   - main: ./cmd/paruz/main.go
     binary: paruz
@@ -20,23 +22,21 @@ builds:
       - 7
 
 archives:
-  - format: tar.gz
-    # this name template makes the name be like `paruz_Linux_x86_64.tar.gz`
+  - formats:
+      - tar.gz
     name_template: >-
       {{ .ProjectName }}_
-      {{- title .Os }}_
+      {{- .Os }}_
       {{- if eq .Arch "amd64" }}x86_64
       {{- else if eq .Arch "386" }}i386
+      {{- else if eq .Arch "arm" }}v{{ .Arm }}
       {{- else }}{{ .Arch }}{{ end }}
-    format_overrides:
-      - goos: windows
-        format: zip
 
 checksum:
   name_template: 'checksums.txt'
 
 snapshot:
-  name_template: "{{ incpatch .Version }}-next"
+  version_template: "{{ incpatch .Version }}-next"
 
 changelog:
   sort: asc

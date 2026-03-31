@@ -14,20 +14,20 @@ case "$ARCH" in
     x86_64) ARCH="x86_64" ;;
     aarch64|arm64) ARCH="arm64" ;;
     i386|i686) ARCH="i386" ;;
-    armv6l) ARCH="armv6" ;;
-    armv7l) ARCH="armv7" ;;
+    armv6l) ARCH="v6" ;;
+    armv7l) ARCH="v7" ;;
     *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
 esac
 
 OS="Linux"
 
-REPO="vyogami/paruz"
+REPO="vyogami/aura"
 # Get the latest release tag from GitHub API
 LATEST_TAG=$(curl -s https://api.github.com/repos/$REPO/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 
 if [ -z "$LATEST_TAG" ]; then
-    echo "Could not fetch latest release tag. Falling back to v1.0.0"
-    LATEST_TAG="v1.0.0"
+    echo "Could not fetch latest release tag. Falling back to v1.0.1"
+    LATEST_TAG="v1.0.1"
 fi
 
 # Clean 'v' from tag if present for the filename part (GoReleaser format)

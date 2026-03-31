@@ -19,14 +19,14 @@ Ensure you have `paru` (or `yay`) and (optionally) `rate-mirrors` installed on y
 Install the latest pre-built binary to `/usr/local/bin`:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/vyogami/paruz/main/install.sh | sudo sh
+curl -sL https://raw.githubusercontent.com/vyogami/aura/main/install.sh | sudo sh
 ```
 
 ### Build from Source
 
 ```bash
-git clone https://github.com/vyogami/paruz
-cd paruz
+git clone https://github.com/vyogami/aura
+cd aura
 go build -o paruz ./cmd/paruz
 ```
 

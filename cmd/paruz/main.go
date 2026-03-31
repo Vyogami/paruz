@@ -8,7 +8,7 @@ import (
 	"github.com/vyogami/paruz/internal/ui"
 )
 
-var version = "v1.0.0"
+var version = "v1.0.1"
 
 func main() {
 	if len(os.Args) > 1 {
