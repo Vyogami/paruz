@@ -19,9 +19,9 @@ case "$ARCH" in
     *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
 esac
 
-OS="Linux"
+OS="linux"
 
-REPO="vyogami/aura"
+REPO="vyogami/paruz"
 # Get the latest release tag from GitHub API
 LATEST_TAG=$(curl -s https://api.github.com/repos/$REPO/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 

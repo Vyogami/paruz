@@ -17,14 +17,14 @@ It allows you to:
 Install the latest pre-built binary to `/usr/local/bin`:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/vyogami/aura/main/install.sh | sudo sh
+curl -sL https://raw.githubusercontent.com/vyogami/paruz/main/install.sh | sudo sh
 ```
 
 ### Build from Source
 
 ```bash
-git clone https://github.com/vyogami/aura
-cd aura
+git clone https://github.com/vyogami/paruz
+cd paruz
 go build -o paruz ./cmd/paruz
 ```
 
