@@ -261,9 +261,13 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.state = stateConfirmBootstrap
 				}
 			case "q", "esc":
-				m.state = stateSearch
 				// Start cache init and fetch packages even if skipped
 				backend.InitCacheLocal()
+				if !backend.IsCacheReady() {
+					m.state = stateBuildingCache
+				} else {
+					m.state = stateSearch
+				}
 				m.refreshingCache = true
 				return m, tea.Batch(m.fetchPackages(""), backend.RefreshCache())
 			}
@@ -469,8 +473,12 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			m.missingDeps = backend.GetMissingDependencies(m.config)
 			if len(m.missingDeps) == 0 {
-				m.state = stateSearch
 				backend.InitCacheLocal()
+				if !backend.IsCacheReady() {
+					m.state = stateBuildingCache
+				} else {
+					m.state = stateSearch
+				}
 				m.refreshingCache = true
 				return m, tea.Batch(m.fetchPackages(""), backend.RefreshCache())
 			}
