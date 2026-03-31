@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/sahilm/fuzzy"
 	"github.com/vyogami/paruz/internal/models"
 )
@@ -16,10 +17,31 @@ var (
 	packageCache []string
 	cacheMutex   sync.RWMutex
 	cacheReady   bool
+	isRefreshing bool
+	waiters      []chan struct{}
 )
 
 // InitCache downloads the AUR package list and gets local packages to allow instant fuzzy search.
 func InitCache() {
+	doCacheInit(nil)
+}
+
+func doCacheInit(done chan struct{}) {
+	cacheMutex.Lock()
+	if done != nil {
+		waiters = append(waiters, done)
+	}
+
+	if isRefreshing {
+		cacheMutex.Unlock()
+		return
+	}
+
+	isRefreshing = true
+	// We DON'T set cacheReady = false or packageCache = nil here.
+	// This allows SearchPackages to continue using the old cache until the new one is ready.
+	cacheMutex.Unlock()
+
 	go func() {
 		// 1. Get Repo packages
 		cmd := exec.Command("pacman", "-Slq")
@@ -41,21 +63,40 @@ func InitCache() {
 			}
 		}
 
-		cacheMutex.Lock()
+		var combined []string
 		// Combine and filter empties
 		for _, r := range repos {
 			if r != "" {
-				packageCache = append(packageCache, r)
+				combined = append(combined, r)
 			}
 		}
 		for _, a := range aur {
 			if a != "" {
-				packageCache = append(packageCache, a)
+				combined = append(combined, a)
 			}
 		}
+
+		cacheMutex.Lock()
+		packageCache = combined
 		cacheReady = true
+		isRefreshing = false
+		for _, w := range waiters {
+			close(w)
+		}
+		waiters = nil
 		cacheMutex.Unlock()
 	}()
+}
+
+type CacheRefreshedMsg struct{}
+
+func RefreshCache() tea.Cmd {
+	return func() tea.Msg {
+		done := make(chan struct{})
+		doCacheInit(done)
+		<-done
+		return CacheRefreshedMsg{}
+	}
 }
 
 // SearchPackages runs `<aurHelper> -Ss <query>` and parses the output into a list of Packages.

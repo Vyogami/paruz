@@ -30,6 +30,7 @@ type AppModel struct {
 	detailView  viewport.Model
 	searchInput textinput.Model
 	searching   bool
+	refreshingCache bool
 	config      config.Config
 	oldConfig   config.Config
 
@@ -282,6 +283,10 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "u":
 				// Update Mirrors
 				return m, m.runMirrorUpdate()
+			case "r":
+				// Refresh Cache
+				m.refreshingCache = true
+				return m, backend.RefreshCache()
 			case "/", "s":
 				// Pressing / or s opens the search bar
 				m.searching = true
@@ -339,6 +344,14 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case error:
 		m.errorMsg = msg.Error()
+
+	case backend.CacheRefreshedMsg:
+		m.refreshingCache = false
+		m.errorMsg = ""
+		// If searching, trigger a new search to use the fresh cache
+		if m.searchInput.Value() != "" {
+			cmds = append(cmds, m.fetchPackages(m.searchInput.Value()))
+		}
 	}
 
 	// Update list if not typing in our remote search and not in settings
@@ -364,7 +377,7 @@ func (m *AppModel) getSearchBar() string {
 	if m.searching {
 		return lipgloss.NewStyle().MarginBottom(1).Render(m.searchInput.View())
 	}
-	return lipgloss.NewStyle().Foreground(theme.StatusBar).MarginBottom(1).Render("Press '/' to search cache. [,] Settings | [q] Quit")
+	return lipgloss.NewStyle().Foreground(theme.StatusBar).MarginBottom(1).Render("Press '/' to search cache. [r] Refresh Cache | [,] Settings | [q] Quit")
 }
 
 func (m *AppModel) updateSizes() {
@@ -436,6 +449,8 @@ func (m *AppModel) View() string {
 	statusText := "Ready"
 	if m.searching {
 		statusText = "Typing Search Query..."
+	} else if m.refreshingCache {
+		statusText = "Refreshing Cache..."
 	}
 	statusBar := StatusBarStyle.Render(fmt.Sprintf("Status: %s | [Enter] Install  [u] Mirrors  [q] Quit", statusText))
 	if m.errorMsg != "" {

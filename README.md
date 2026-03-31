@@ -29,6 +29,7 @@ Run the compiled binary:
 - **`/`**: Start filtering/searching packages
 - **`Enter`**: Install the selected package
 - **`u`**: Update mirrorlist (requires `rate-mirrors` and `sudo`)
+- **`r`**: Refresh package cache
 - **`,`**: Open settings menu
 - **`Esc`**: Exit terminal execution or clear search
 - **`q`**: Quit the application
