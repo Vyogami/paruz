@@ -160,17 +160,7 @@ func (m *AppModel) runInstallCmd(pkgName string) tea.Cmd {
 }
 
 func (m *AppModel) runMirrorUpdate() tea.Cmd {
-	var cmdStr string
-	if m.config.MirrorHelper == "reflector" {
-		cmdStr = "sudo reflector --latest 20 --protocol https --sort rate --save /etc/pacman.d/mirrorlist; echo '\n[Press any key to return to paruz...]'; read -n 1 -s -r"
-	} else {
-		// rate-mirrors should be run without sudo for fetching, but piped with sudo to tee.
-		cmdStr = "rate-mirrors arch | sudo tee /etc/pacman.d/mirrorlist; echo '\n[Press any key to return to paruz...]'; read -n 1 -s -r"
-	}
-	cmd := exec.Command("sh", "-c", cmdStr)
-	return tea.ExecProcess(cmd, func(err error) tea.Msg {
-		return execFinishedMsg{err: err}
-	})
+	return backend.GetMirrorUpdateCmd(m.config.MirrorHelper)
 }
 
 func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -332,6 +322,14 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pkgInfo = msg.info
 		}
 		m.detailView.SetContent(m.pkgInfo)
+
+	case backend.MirrorUpdateFinishedMsg:
+		if msg.Err != nil {
+			m.errorMsg = fmt.Sprintf("Mirror update failed: %v", msg.Err)
+		} else {
+			m.errorMsg = ""
+		}
+		m.updateSizes()
 
 	case execFinishedMsg:
 		if msg.err != nil {
