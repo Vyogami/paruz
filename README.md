@@ -77,6 +77,6 @@ Paruz is built in Go using the incredible [Charmbracelet](https://charm.sh/) eco
 
 ## Inspiration
 
-This project is inspired by the original [paruz](https://github.com/joehillen/paruz) by Joe Hillen. However, that project has been abandoned and its source code is no longer available on GitHub. 
+This project is inspired by the original [\<github\> paruz \[deleted\]](https://github.com/joehillen/paruz), [\<AUR\> paruz-git](https://aur.archlinux.org/packages/paruz-git) by Joe Hillen. However, that project has been abandoned and its source code is no longer available on GitHub. 
 
 While the original `paruz` was a simple script that used `fzf` to provide a selection interface for `paru`, this version of **Paruz** is a complete, standalone TUI built from the ground up using **Bubble Tea**. It provides a richer, more interactive experience.
