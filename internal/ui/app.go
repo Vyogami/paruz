@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -33,6 +34,7 @@ type AppModel struct {
 	delegate    list.DefaultDelegate
 	detailView  viewport.Model
 	searchInput textinput.Model
+	spinner     spinner.Model
 	searching   bool
 	refreshingCache bool
 	config      config.Config
@@ -83,12 +85,17 @@ func InitialModel(version string) *AppModel {
 	ti.CharLimit = 156
 	ti.Width = 40
 
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+
 	m := &AppModel{
 		state:             stateSearch,
 		list:              l,
 		delegate:          d,
 		detailView:        dv,
 		searchInput:       ti,
+		spinner:           s,
 		config:            cfg,
 		version:           version,
 		settingsIndex:     0,
@@ -154,6 +161,10 @@ func (m *AppModel) Init() tea.Cmd {
 		textinput.Blink,
 		m.fetchPackages(""), // initial fetch
 	)
+	
+	if m.state == stateBuildingCache {
+		cmds = append(cmds, m.spinner.Tick)
+	}
 	
 	if len(m.missingDeps) == 0 {
 		m.refreshingCache = true
@@ -392,6 +403,13 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.updateSizes()
 
+	case spinner.TickMsg:
+		if m.state == stateBuildingCache {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
+
 	case packagesFetchedMsg:
 		if msg.query != m.searchInput.Value() {
 			return m, nil
@@ -547,9 +565,9 @@ func (m *AppModel) View() string {
 
 	if m.state == stateBuildingCache {
 		title := TitleStyle.Render(" Initializing Cache ")
-		content := "Building the initial package cache...\nThis may take a few moments.\n\n[q] Quit"
+		content := fmt.Sprintf("%s Building the initial package cache...\nThis may take a few moments.\n\n[q] Quit", m.spinner.View())
 		pane := PaneStyle.Copy().
-			Width(50).
+			Width(55).
 			Height(5).
 			Align(lipgloss.Center).
 			Render(content)
