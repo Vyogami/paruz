@@ -585,8 +585,12 @@ func (m *AppModel) View() string {
 	}
 
 	if m.state == stateBuildingCache {
+		theme := Themes[m.config.Theme]
+		keyColor := lipgloss.NewStyle().Foreground(theme.InfoKey)
+
 		title := TitleStyle.Render(" Initializing Cache ")
-		content := fmt.Sprintf("%s Building the initial package cache...\nThis may take a few moments.\n\n[q] Quit", m.spinner.View())
+		shortcuts := fmt.Sprintf("%s Quit", keyColor.Render("[q]"))
+		content := fmt.Sprintf("%s Building the initial package cache...\nThis may take a few moments.\n\n%s", m.spinner.View(), shortcuts)
 		pane := PaneStyle.Copy().
 			Width(55).
 			Height(5).
@@ -602,6 +606,9 @@ func (m *AppModel) View() string {
 	}
 
 	if m.state == stateConfirmBootstrap {
+		theme := Themes[m.config.Theme]
+		keyColor := lipgloss.NewStyle().Foreground(theme.InfoKey)
+
 		title := TitleStyle.Render(" Install Dependencies? ")
 		var selected []string
 		for i, dep := range m.missingDeps {
@@ -615,7 +622,8 @@ func (m *AppModel) View() string {
 			selectedText = selectedText[:37] + "..."
 		}
 		
-		content := fmt.Sprintf("Install %d selected items?\n(%s)\n\n[y] Yes  [n] No", len(selected), selectedText)
+		shortcuts := fmt.Sprintf("%s Yes  %s No", keyColor.Render("[y]"), keyColor.Render("[n]"))
+		content := fmt.Sprintf("Install %d selected items?\n(%s)\n\n%s", len(selected), selectedText, shortcuts)
 		pane := PaneStyle.Copy().
 			Width(50).
 			Height(7).
@@ -631,8 +639,12 @@ func (m *AppModel) View() string {
 	}
 
 	if m.state == stateConfirmSettings {
+		theme := Themes[m.config.Theme]
+		keyColor := lipgloss.NewStyle().Foreground(theme.InfoKey)
+
 		title := TitleStyle.Render(" Save Changes? ")
-		content := "You have unsaved changes. Do you want to save them?\n\n[y] Yes  [n] No"
+		shortcuts := fmt.Sprintf("%s Yes  %s No", keyColor.Render("[y]"), keyColor.Render("[n]"))
+		content := fmt.Sprintf("You have unsaved changes. Do you want to save them?\n\n%s", shortcuts)
 		pane := PaneStyle.Copy().
 			Width(40).
 			Height(5).
@@ -731,8 +743,16 @@ func (m *AppModel) bootstrapView() string {
 		dialogWidth = 0
 	}
 
+	keyColor := lipgloss.NewStyle().Foreground(theme.InfoKey)
+	footerText := fmt.Sprintf("%s Navigate | %s Toggle | %s Install | %s Skip",
+		keyColor.Render("j/k:"),
+		keyColor.Render("Space:"),
+		keyColor.Render("Enter:"),
+		keyColor.Render("q:"),
+	)
+	
 	pane := PaneStyle.Copy().Width(dialogWidth).Render(content)
-	footer := StatusBarStyle.Render("j/k: Navigate | Space: Toggle | Enter: Install | q: Skip")
+	footer := StatusBarStyle.Render(footerText)
 	
 	dialog := lipgloss.JoinVertical(lipgloss.Center, title, pane, footer)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialog)
@@ -766,8 +786,15 @@ func (m *AppModel) settingsView() string {
 		dialogWidth = 0
 	}
 
+	keyColor := lipgloss.NewStyle().Foreground(theme.InfoKey)
+	footerText := fmt.Sprintf("%s Navigate | %s Toggle | %s Back",
+		keyColor.Render("j/k:"),
+		keyColor.Render("Space:"),
+		keyColor.Render("Esc:"),
+	)
+
 	pane := PaneStyle.Copy().Width(dialogWidth).Render(content)
-	footer := StatusBarStyle.Render("j/k: Navigate | Space: Toggle | Esc: Back")
+	footer := StatusBarStyle.Render(footerText)
 	
 	dialog := lipgloss.JoinVertical(lipgloss.Center, title, pane, footer)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialog)
