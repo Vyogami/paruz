@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"compress/gzip"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -20,6 +22,33 @@ var (
 	isRefreshing bool
 	waiters      []chan struct{}
 )
+
+func getCacheFile() string {
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		cacheDir = "/tmp"
+	}
+	paruzDir := filepath.Join(cacheDir, "paruz")
+	os.MkdirAll(paruzDir, 0755)
+	return filepath.Join(paruzDir, "packages.txt")
+}
+
+func InitCacheLocal() {
+	cacheFile := getCacheFile()
+	data, err := os.ReadFile(cacheFile)
+	if err == nil {
+		cacheMutex.Lock()
+		packageCache = strings.Split(string(data), "\n")
+		cacheReady = true
+		cacheMutex.Unlock()
+	}
+}
+
+func IsCacheReady() bool {
+	cacheMutex.RLock()
+	defer cacheMutex.RUnlock()
+	return cacheReady
+}
 
 // InitCache downloads the AUR package list and gets local packages to allow instant fuzzy search.
 func InitCache() {
@@ -85,6 +114,9 @@ func doCacheInit(done chan struct{}) {
 		}
 		waiters = nil
 		cacheMutex.Unlock()
+
+		// Write to disk cache
+		os.WriteFile(getCacheFile(), []byte(strings.Join(combined, "\n")), 0644)
 	}()
 }
 
@@ -120,7 +152,8 @@ func SearchPackages(query string, aurHelper string) ([]models.Package, error) {
 	if ready {
 		cacheMutex.RLock()
 		defer cacheMutex.RUnlock()
-		matches := fuzzy.Find(query, packageCache)
+		fuzzyQuery := strings.ReplaceAll(query, " ", "")
+		matches := fuzzy.Find(fuzzyQuery, packageCache)
 		var pkgs []models.Package
 		for i, match := range matches {
 			if i > 150 { // Limit to top 150 results for UI performance
@@ -135,7 +168,9 @@ func SearchPackages(query string, aurHelper string) ([]models.Package, error) {
 	}
 
 	// Fallback if cache not ready
-	cmd := exec.Command(aurHelper, "-Ss", query)
+	args := []string{"-Ss"}
+	args = append(args, strings.Fields(query)...)
+	cmd := exec.Command(aurHelper, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		// returns non-zero if nothing is found.

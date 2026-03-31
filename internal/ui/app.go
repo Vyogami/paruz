@@ -24,6 +24,7 @@ const (
 	stateConfirmSettings
 	stateBootstrap
 	stateConfirmBootstrap
+	stateBuildingCache
 )
 
 type AppModel struct {
@@ -110,7 +111,10 @@ func InitialModel(version string) *AppModel {
 			}
 		}
 	} else {
-		backend.InitCache()
+		backend.InitCacheLocal()
+		if !backend.IsCacheReady() {
+			m.state = stateBuildingCache
+		}
 	}
 
 	m.updateTheme()
@@ -144,23 +148,32 @@ func (m *AppModel) updateTheme() {
 }
 
 func (m *AppModel) Init() tea.Cmd {
-	return tea.Batch(
+	var cmds []tea.Cmd
+	cmds = append(cmds,
 		tea.EnterAltScreen,
 		textinput.Blink,
 		m.fetchPackages(""), // initial fetch
 	)
+	
+	if len(m.missingDeps) == 0 {
+		m.refreshingCache = true
+		cmds = append(cmds, backend.RefreshCache())
+	}
+	
+	return tea.Batch(cmds...)
 }
 
 // Commands
 type packagesFetchedMsg struct {
+	query    string
 	packages []models.Package
 	err      error
 }
 
 func (m *AppModel) fetchPackages(query string) tea.Cmd {
 	return func() tea.Msg {
-		pkgs, err := backend.SearchPackages(query, m.config.AURHelper)
-		return packagesFetchedMsg{packages: pkgs, err: err}
+		pkgs, err := backend.SearchPackages(strings.TrimSpace(query), m.config.AURHelper)
+		return packagesFetchedMsg{query: query, packages: pkgs, err: err}
 	}
 }
 
@@ -203,6 +216,14 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
+		if m.state == stateBuildingCache {
+			switch msg.String() {
+			case "q", "esc":
+				return m, tea.Quit
+			}
+			return m, nil
+		}
+
 		if m.state == stateBootstrap {
 			switch msg.String() {
 			case "j", "down":
@@ -224,8 +245,9 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "q", "esc":
 				m.state = stateSearch
 				// Start cache init and fetch packages even if skipped
-				backend.InitCache()
-				return m, m.fetchPackages("")
+				backend.InitCacheLocal()
+				m.refreshingCache = true
+				return m, tea.Batch(m.fetchPackages(""), backend.RefreshCache())
 			}
 			return m, nil
 		}
@@ -371,6 +393,10 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateSizes()
 
 	case packagesFetchedMsg:
+		if msg.query != m.searchInput.Value() {
+			return m, nil
+		}
+		
 		if msg.err != nil {
 			m.errorMsg = msg.err.Error()
 		} else {
@@ -415,8 +441,9 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.missingDeps = backend.GetMissingDependencies(m.config)
 			if len(m.missingDeps) == 0 {
 				m.state = stateSearch
-				backend.InitCache()
-				return m, m.fetchPackages("")
+				backend.InitCacheLocal()
+				m.refreshingCache = true
+				return m, tea.Batch(m.fetchPackages(""), backend.RefreshCache())
 			}
 			if m.bootstrapIdx >= len(m.missingDeps) {
 				m.bootstrapIdx = 0
@@ -447,8 +474,11 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case backend.CacheRefreshedMsg:
 		m.refreshingCache = false
 		m.errorMsg = ""
-		// If searching, trigger a new search to use the fresh cache
-		if m.searchInput.Value() != "" {
+		if m.state == stateBuildingCache {
+			m.state = stateSearch
+			cmds = append(cmds, m.fetchPackages(m.searchInput.Value()))
+		} else if m.searchInput.Value() != "" {
+			// If searching, trigger a new search to use the fresh cache
 			cmds = append(cmds, m.fetchPackages(m.searchInput.Value()))
 		}
 	}
@@ -513,6 +543,19 @@ func (m *AppModel) updateSizes() {
 func (m *AppModel) View() string {
 	if m.width == 0 {
 		return "Initializing..."
+	}
+
+	if m.state == stateBuildingCache {
+		title := TitleStyle.Render(" Initializing Cache ")
+		content := "Building the initial package cache...\nThis may take a few moments.\n\n[q] Quit"
+		pane := PaneStyle.Copy().
+			Width(50).
+			Height(5).
+			Align(lipgloss.Center).
+			Render(content)
+
+		dialog := lipgloss.JoinVertical(lipgloss.Center, title, pane)
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialog)
 	}
 
 	if m.state == stateBootstrap {
