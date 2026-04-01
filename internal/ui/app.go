@@ -542,10 +542,35 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *AppModel) getSearchBar() string {
 	theme := Themes[m.config.Theme]
+	
+	style := SearchStyle.Copy().
+		Width(m.width).
+		Border(lipgloss.NormalBorder(), false, false, true, false).
+		BorderForeground(theme.Border)
+	
+	var content string
 	if m.searching {
-		return lipgloss.NewStyle().MarginBottom(1).Render(m.searchInput.View())
+		prefix := lipgloss.NewStyle().
+			Background(theme.InfoKey).
+			Foreground(theme.TitleFg).
+			Bold(true).
+			Padding(0, 1).
+			Render(" SEARCH ")
+		
+		content = lipgloss.JoinHorizontal(lipgloss.Top, prefix, " ", m.searchInput.View())
+		style = style.BorderForeground(theme.InfoKey)
+	} else {
+		prefix := lipgloss.NewStyle().
+			Background(theme.Border).
+			Foreground(theme.TitleFg).
+			Padding(0, 1).
+			Render(" PARUZ ")
+			
+		hint := lipgloss.NewStyle().Foreground(theme.StatusBar).Render(" Press [/] to start searching packages...")
+		content = lipgloss.JoinHorizontal(lipgloss.Top, prefix, hint)
 	}
-	return lipgloss.NewStyle().Foreground(theme.StatusBar).MarginBottom(1).Render("Press '/' to search cache. [r] Refresh Cache | [,] Settings | [q] Quit")
+	
+	return style.Render(content)
 }
 
 func (m *AppModel) updateSizes() {
@@ -656,11 +681,19 @@ func (m *AppModel) View() string {
 	}
 
 
-	listPane := ListPaneStyle.Render(m.list.View())
+	theme := Themes[m.config.Theme]
+	listStyle := ListPaneStyle.Copy()
+	detailStyle := DetailPaneStyle.Copy()
+
+	if !m.searching && m.state == stateSearch {
+		listStyle = listStyle.BorderForeground(theme.InfoKey)
+	}
+
+	listPane := listStyle.Render(m.list.View())
 
 	detailContent := m.detailView.View()
 	if m.detailView.Height > 0 {
-		detailContent = DetailPaneStyle.Render(detailContent)
+		detailContent = detailStyle.Render(detailContent)
 	}
 
 	searchBar := m.getSearchBar()
@@ -669,7 +702,6 @@ func (m *AppModel) View() string {
 		lipgloss.JoinHorizontal(lipgloss.Top, listPane, detailContent),
 	)
 
-	theme := Themes[m.config.Theme]
 	statusColor := lipgloss.NewStyle().Foreground(theme.InfoKey).Bold(true)
 	keyColor := lipgloss.NewStyle().Foreground(theme.InfoKey)
 	
@@ -687,13 +719,30 @@ func (m *AppModel) View() string {
 		statusText = fmt.Sprintf("Refreshing Cache %s", m.spinner.View())
 	}
 
-	shortcuts := fmt.Sprintf("%s Install  %s Update Mirrors  %s Quit",
-		keyColor.Render("[enter]"),
-		keyColor.Render("[u]"),
-		keyColor.Render("[q]"),
-	)
+	shortcuts := ""
+	if m.searching {
+		shortcuts = fmt.Sprintf("%s finish • %s cancel",
+			keyColor.Render("[enter]"),
+			keyColor.Render("[esc]"),
+		)
+	} else {
+		shortcuts = fmt.Sprintf("%s install • %s update mirrors • %s refresh cache • %s settings • %s quit",
+			keyColor.Render("[enter]"),
+			keyColor.Render("[u]"),
+			keyColor.Render("[r]"),
+			keyColor.Render("[,]"),
+			keyColor.Render("[q]"),
+		)
+	}
 
-	statusBar := StatusBarStyle.Render(fmt.Sprintf("%s %s | %s", statusLabel, statusText, shortcuts))
+	statusPart := fmt.Sprintf("%s %s", statusLabel, statusText)
+	spacerWidth := m.width - lipgloss.Width(statusPart) - lipgloss.Width(shortcuts)
+	if spacerWidth < 1 {
+		spacerWidth = 1
+	}
+	spacer := strings.Repeat(" ", spacerWidth)
+
+	statusBar := StatusBarStyle.Render(statusPart + spacer + shortcuts)
 	if m.errorMsg != "" {
 		statusBar = StatusBarStyle.Render("Error: " + m.errorMsg)
 	}
