@@ -69,11 +69,12 @@ var Themes = map[string]Theme{
 }
 
 var (
-	AppStyle        = lipgloss.NewStyle().Padding(1, 0)
+	AppStyle        = lipgloss.NewStyle().Padding(2, 0, 1, 0)
 	TitleStyle      lipgloss.Style
 	PaneStyle       lipgloss.Style
 	ListPaneStyle   lipgloss.Style
 	DetailPaneStyle lipgloss.Style
+	SearchStyle     lipgloss.Style
 	InfoTitleStyle  lipgloss.Style
 	InfoKeyStyle    lipgloss.Style
 	ErrorStyle      lipgloss.Style
@@ -99,6 +100,9 @@ func ApplyTheme(themeName string) {
 	ListPaneStyle = PaneStyle.Copy().Width(50)
 
 	DetailPaneStyle = PaneStyle.Copy().Padding(1, 2)
+
+	SearchStyle = lipgloss.NewStyle().
+		MarginBottom(1)
 
 	InfoTitleStyle = lipgloss.NewStyle().
 		Bold(true).
