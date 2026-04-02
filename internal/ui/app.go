@@ -545,7 +545,7 @@ func (m *AppModel) getSearchBar() string {
 	if m.searching {
 		return lipgloss.NewStyle().MarginBottom(1).Render(m.searchInput.View())
 	}
-	return lipgloss.NewStyle().Foreground(theme.StatusBar).MarginBottom(1).Render("Press '/' to search cache. [r] Refresh Cache | [,] Settings | [q] Quit")
+	return lipgloss.NewStyle().Foreground(theme.StatusBar).MarginBottom(1).MarginLeft(1).Render("Press '/' to search cache. [r] Refresh Cache | [,] Settings | [q] Quit")
 }
 
 func (m *AppModel) updateSizes() {
