@@ -363,10 +363,12 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					title = "installed"
 				}
 				m.list.Title = "paruz (" + title + ")"
+				m.updateSizes()
 				return m, nil // Already fetching while typing
 			case "esc":
 				m.searching = false
 				m.searchInput.Blur()
+				m.updateSizes()
 				return m, nil
 			}
 
@@ -399,6 +401,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Pressing / or s opens the search bar
 				m.searching = true
 				m.searchInput.Focus()
+				m.updateSizes()
 				return m, nil
 			case ",":
 				// Settings Screen
@@ -428,10 +431,11 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.query != m.searchInput.Value() {
 			return m, nil
 		}
-
+		
 		cmds = append(cmds, stopFetchingCmd())
-
-		if msg.err != nil {			m.errorMsg = msg.err.Error()
+		
+		if msg.err != nil {
+			m.errorMsg = msg.err.Error()
 		} else {
 			items := make([]list.Item, len(msg.packages))
 			for i, p := range msg.packages {
@@ -544,68 +548,154 @@ func (m *AppModel) getSearchBar() string {
 	theme := Themes[m.config.Theme]
 	
 	style := SearchStyle.Copy().
-		Width(m.width).
+		Width(m.width - (rootSidePad * 2)).
+		Height(1).
 		Border(lipgloss.NormalBorder(), false, false, true, false).
 		BorderForeground(theme.Border)
 	
+	if m.searching {
+		style = style.BorderForeground(theme.InfoKey)
+	}
+
+	prefixStyle := lipgloss.NewStyle().
+		Foreground(theme.TitleFg).
+		Padding(0, 1)
+
 	var content string
 	if m.searching {
-		prefix := lipgloss.NewStyle().
+		prefix := prefixStyle.Copy().
 			Background(theme.InfoKey).
-			Foreground(theme.TitleFg).
 			Bold(true).
-			Padding(0, 1).
 			Render(" SEARCH ")
 		
+		// Constrain search input width
+		m.searchInput.Width = m.width - (rootSidePad * 2) - lipgloss.Width(prefix) - 2
+		if m.searchInput.Width < 5 {
+			m.searchInput.Width = 5
+		}
+		
 		content = lipgloss.JoinHorizontal(lipgloss.Top, prefix, " ", m.searchInput.View())
-		style = style.BorderForeground(theme.InfoKey)
 	} else {
-		prefix := lipgloss.NewStyle().
+		prefix := prefixStyle.Copy().
 			Background(theme.Border).
-			Foreground(theme.TitleFg).
-			Padding(0, 1).
 			Render(" PARUZ ")
 			
-		hint := lipgloss.NewStyle().Foreground(theme.StatusBar).Render(" Press [/] to start searching packages...")
+		hintText := " Press [/] to start searching packages..."
+		maxHintWidth := m.width - (rootSidePad * 2) - lipgloss.Width(prefix) - 2
+		if len(hintText) > maxHintWidth && maxHintWidth > 5 {
+			hintText = hintText[:maxHintWidth-3] + "..."
+		}
+		
+		hint := lipgloss.NewStyle().Foreground(theme.StatusBar).Render(hintText)
 		content = lipgloss.JoinHorizontal(lipgloss.Top, prefix, hint)
 	}
 	
 	return style.Render(content)
 }
 
+// Layout constants
+const (
+	rootTopPad    = 2
+	rootBottomPad = 1
+	rootSidePad   = 3 // Increased safety padding
+	headerHeight  = 2 // 1 content + 1 border
+	spacerHeight  = 1 // one above and one below panes
+)
+
 func (m *AppModel) updateSizes() {
-	appH, appV := AppStyle.GetFrameSize()
-	listH, listV := ListPaneStyle.GetFrameSize()
-	detailH, detailV := DetailPaneStyle.GetFrameSize()
+	// Determine footer height (1 or 2 lines)
+	footerH := 1
+	theme := Themes[m.config.Theme]
+	statusColor := lipgloss.NewStyle().Foreground(theme.InfoKey).Bold(true)
+	keyColor := lipgloss.NewStyle().Foreground(theme.InfoKey)
+	statusLabel := statusColor.Render("Status:")
+	tickView := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("✓") + " "
+	statusText := fmt.Sprintf("Ready %s", tickView)
+	statusPart := fmt.Sprintf("%s %s", statusLabel, statusText)
+	
+	shortcuts := ""
+	if m.searching {
+		shortcuts = fmt.Sprintf("%s finish • %s cancel",
+			keyColor.Render("[enter]"),
+			keyColor.Render("[esc]"),
+		)
+	} else {
+		shortcuts = fmt.Sprintf("%s install • %s update mirrors • %s refresh cache • %s settings • %s quit",
+			keyColor.Render("[enter]"),
+			keyColor.Render("[u]"),
+			keyColor.Render("[r]"),
+			keyColor.Render("[,]"),
+			keyColor.Render("[q]"),
+		)
+	}
+	
+	// availableWidth with safety buffer
+	availableWidth := m.width - (rootSidePad * 2)
+	if availableWidth < 0 {
+		availableWidth = 0
+	}
 
-	searchBarHeight := lipgloss.Height(m.getSearchBar())
+	if availableWidth < lipgloss.Width(statusPart)+lipgloss.Width(shortcuts)+5 {
+		footerH = 2
+	}
 
-	panesHeight := m.height - appV - 2 - searchBarHeight
+	// Calculate vertical space available for the panes
+	panesHeight := m.height - rootTopPad - rootBottomPad - headerHeight - (spacerHeight * 2) - footerH
 	if panesHeight < 0 {
 		panesHeight = 0
 	}
 
-	listWidth := 45
-	listInnerHeight := panesHeight - listV
+	var listWidth int
+	var detailWidth int // Outer widths
+
+	if availableWidth < 90 {
+		// Narrow mode: only list
+		listWidth = availableWidth
+		detailWidth = 0
+	} else {
+		// Wide mode: list and detail
+		listWidth = availableWidth / 3
+		if listWidth < 35 {
+			listWidth = 35
+		}
+		if listWidth > 60 {
+			listWidth = 60
+		}
+		detailWidth = availableWidth - listWidth
+	}
+
+	// Internal sizes (subtracting 4 for border+padding of PaneStyle)
+	listInnerWidth := listWidth - 4
+	if listInnerWidth < 0 {
+		listInnerWidth = 0
+	}
+	listInnerHeight := panesHeight - 4
 	if listInnerHeight < 0 {
 		listInnerHeight = 0
 	}
-	m.list.SetSize(listWidth, listInnerHeight)
+	m.list.SetSize(listInnerWidth, listInnerHeight)
 
-	detailInnerWidth := m.width - appH - (listWidth + listH) - detailH - 2
+	detailInnerWidth := detailWidth - 4
 	if detailInnerWidth < 0 {
 		detailInnerWidth = 0
 	}
-	detailInnerHeight := panesHeight - detailV
+	detailInnerHeight := panesHeight - 4
 	if detailInnerHeight < 0 {
 		detailInnerHeight = 0
 	}
 	m.detailView.Width = detailInnerWidth
 	m.detailView.Height = detailInnerHeight
+
+	// Update search input width
+	prefixWidth := lipgloss.Width(lipgloss.NewStyle().Padding(0, 1).Render(" SEARCH "))
+	m.searchInput.Width = availableWidth - prefixWidth - 2
+	if m.searchInput.Width < 5 {
+		m.searchInput.Width = 5
+	}
 }
 
 func (m *AppModel) View() string {
-	if m.width == 0 {
+	if m.width == 0 || m.height == 0 {
 		return "Initializing..."
 	}
 
@@ -689,36 +779,15 @@ func (m *AppModel) View() string {
 		listStyle = listStyle.BorderForeground(theme.InfoKey)
 	}
 
-	listPane := listStyle.Render(m.list.View())
-
-	detailContent := m.detailView.View()
-	if m.detailView.Height > 0 {
-		detailContent = detailStyle.Render(detailContent)
-	}
-
-	searchBar := m.getSearchBar()
-	mainView := lipgloss.JoinVertical(lipgloss.Left,
-		searchBar,
-		lipgloss.JoinHorizontal(lipgloss.Top, listPane, detailContent),
-	)
-
+	// Constants for vertical budget (must match updateSizes)
+	footerH := 1
 	statusColor := lipgloss.NewStyle().Foreground(theme.InfoKey).Bold(true)
 	keyColor := lipgloss.NewStyle().Foreground(theme.InfoKey)
-	
 	statusLabel := statusColor.Render("Status:")
 	tickView := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("✓") + " "
-
 	statusText := fmt.Sprintf("Ready %s", tickView)
-	if m.searching {
-		spinnerView := tickView
-		if m.fetching {
-			spinnerView = m.spinner.View()
-		}
-		statusText = fmt.Sprintf("Typing Search Query %s", spinnerView)
-	} else if m.refreshingCache {
-		statusText = fmt.Sprintf("Refreshing Cache %s", m.spinner.View())
-	}
-
+	statusPart := fmt.Sprintf("%s %s", statusLabel, statusText)
+	
 	shortcuts := ""
 	if m.searching {
 		shortcuts = fmt.Sprintf("%s finish • %s cancel",
@@ -734,20 +803,83 @@ func (m *AppModel) View() string {
 			keyColor.Render("[q]"),
 		)
 	}
-
-	statusPart := fmt.Sprintf("%s %s", statusLabel, statusText)
-	spacerWidth := m.width - lipgloss.Width(statusPart) - lipgloss.Width(shortcuts)
-	if spacerWidth < 1 {
-		spacerWidth = 1
+	
+	availableWidth := m.width - (rootSidePad * 2)
+	if availableWidth < 0 {
+		availableWidth = 0
 	}
-	spacer := strings.Repeat(" ", spacerWidth)
 
-	statusBar := StatusBarStyle.Render(statusPart + spacer + shortcuts)
+	if availableWidth < lipgloss.Width(statusPart)+lipgloss.Width(shortcuts)+5 {
+		footerH = 2
+	}
+	
+	panesHeight := m.height - rootTopPad - rootBottomPad - headerHeight - (spacerHeight * 2) - footerH
+	if panesHeight < 0 {
+		panesHeight = 0
+	}
+
+	// Render panes
+	// Widths are OUTER widths. Internal size + frame(4)
+	listWidth := m.list.Width() + 4
+	listPane := listStyle.Width(listWidth).Height(panesHeight).Render(strings.TrimSuffix(m.list.View(), "\n"))
+
+	detailContent := ""
+	if m.detailView.Width > 5 {
+		dWidth := m.detailView.Width + 4
+		detailContent = detailStyle.Width(dWidth).Height(panesHeight).Render(strings.TrimSuffix(m.detailView.View(), "\n"))
+	}
+
+	searchBar := strings.TrimSuffix(m.getSearchBar(), "\n")
+	mainPanes := lipgloss.JoinHorizontal(lipgloss.Top, listPane, detailContent)
+	
+	// Assembly
+	mainView := lipgloss.JoinVertical(lipgloss.Left,
+		searchBar,
+		"", // spacer
+		mainPanes,
+	)
+
+	// Refresh status indicators
+	statusText = fmt.Sprintf("Ready %s", tickView)
+	if m.searching {
+		spinnerView := tickView
+		if m.fetching {
+			spinnerView = m.spinner.View()
+		}
+		statusText = fmt.Sprintf("Typing Search Query %s", spinnerView)
+	} else if m.refreshingCache {
+		statusText = fmt.Sprintf("Refreshing Cache %s", m.spinner.View())
+	}
+
+	statusPart = fmt.Sprintf("%s %s", statusLabel, statusText)
+	statusPartWidth := lipgloss.Width(statusPart)
+	shortcutsWidth := lipgloss.Width(shortcuts)
+	
+	var statusBar string
+	if footerH == 1 {
+		spacerWidth := availableWidth - statusPartWidth - shortcutsWidth
+		if spacerWidth < 0 {
+			spacerWidth = 0
+		}
+		spacer := strings.Repeat(" ", spacerWidth)
+		statusBar = statusPart + spacer + shortcuts
+	} else {
+		statusBar = statusPart + "\n" + shortcuts
+	}
+
 	if m.errorMsg != "" {
-		statusBar = StatusBarStyle.Render("Error: " + m.errorMsg)
+		statusBar = "Error: " + m.errorMsg
 	}
 
-	return AppStyle.Render(lipgloss.JoinVertical(lipgloss.Left, mainView, statusBar))
+	finalContent := lipgloss.JoinVertical(lipgloss.Left,
+		mainView,
+		"", // spacer
+		StatusBarStyle.Render(statusBar),
+	)
+
+	// Final placement with guaranteed dimensions
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Top, 
+		lipgloss.NewStyle().Padding(rootTopPad, 0, rootBottomPad, 0).Render(finalContent))
 }
 
 func (m *AppModel) bootstrapView() string {
