@@ -544,11 +544,11 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m *AppModel) getSearchBar() string {
+func (m *AppModel) getSearchBar(barWidth int) string {
 	theme := Themes[m.config.Theme]
 	
 	style := SearchStyle.Copy().
-		Width(m.width - (rootSidePad * 2)).
+		Width(barWidth).
 		Height(1).
 		Border(lipgloss.NormalBorder(), false, false, true, false).
 		BorderForeground(theme.Border)
@@ -568,8 +568,8 @@ func (m *AppModel) getSearchBar() string {
 			Bold(true).
 			Render(" SEARCH ")
 		
-		// Constrain search input width
-		m.searchInput.Width = m.width - (rootSidePad * 2) - lipgloss.Width(prefix) - 2
+		// Constrain search input width to match the bar
+		m.searchInput.Width = barWidth - lipgloss.Width(prefix) - 2
 		if m.searchInput.Width < 5 {
 			m.searchInput.Width = 5
 		}
@@ -581,7 +581,7 @@ func (m *AppModel) getSearchBar() string {
 			Render(" PARUZ ")
 			
 		hintText := " Press [/] to start searching packages..."
-		maxHintWidth := m.width - (rootSidePad * 2) - lipgloss.Width(prefix) - 2
+		maxHintWidth := barWidth - lipgloss.Width(prefix) - 2
 		if len(hintText) > maxHintWidth && maxHintWidth > 5 {
 			hintText = hintText[:maxHintWidth-3] + "..."
 		}
@@ -595,11 +595,11 @@ func (m *AppModel) getSearchBar() string {
 
 // Layout constants
 const (
-	rootTopPad    = 2
+	rootTopPad    = 1
 	rootBottomPad = 1
 	rootSidePad   = 3 // Increased safety padding
 	headerHeight  = 2 // 1 content + 1 border
-	spacerHeight  = 1 // one above and one below panes
+	spacerHeight  = 1 // spacer between panes and status bar
 )
 
 func (m *AppModel) updateSizes() {
@@ -639,8 +639,11 @@ func (m *AppModel) updateSizes() {
 		footerH = 2
 	}
 
-	// Calculate vertical space available for the panes
-	panesHeight := m.height - rootTopPad - rootBottomPad - headerHeight - (spacerHeight * 2) - footerH
+	// Calculate vertical space available for the panes.
+	// Height() sets content+padding height; border is added on top,
+	// so subtract the pane border overhead to avoid overflow.
+	paneBorderV := PaneStyle.GetBorderTopSize() + PaneStyle.GetBorderBottomSize()
+	panesHeight := m.height - rootTopPad - rootBottomPad - headerHeight - spacerHeight - footerH - paneBorderV
 	if panesHeight < 0 {
 		panesHeight = 0
 	}
@@ -664,22 +667,25 @@ func (m *AppModel) updateSizes() {
 		detailWidth = availableWidth - listWidth
 	}
 
-	// Internal sizes (subtracting 4 for border+padding of PaneStyle)
-	listInnerWidth := listWidth - 4
+	// Internal sizes — subtract actual frame (border+padding) for each style
+	listFrameH, listFrameV := ListPaneStyle.GetFrameSize()
+	detailFrameH, detailFrameV := DetailPaneStyle.GetFrameSize()
+
+	listInnerWidth := listWidth - listFrameH
 	if listInnerWidth < 0 {
 		listInnerWidth = 0
 	}
-	listInnerHeight := panesHeight - 4
+	listInnerHeight := panesHeight - listFrameV
 	if listInnerHeight < 0 {
 		listInnerHeight = 0
 	}
 	m.list.SetSize(listInnerWidth, listInnerHeight)
 
-	detailInnerWidth := detailWidth - 4
+	detailInnerWidth := detailWidth - detailFrameH
 	if detailInnerWidth < 0 {
 		detailInnerWidth = 0
 	}
-	detailInnerHeight := panesHeight - 4
+	detailInnerHeight := panesHeight - detailFrameV
 	if detailInnerHeight < 0 {
 		detailInnerHeight = 0
 	}
@@ -813,29 +819,39 @@ func (m *AppModel) View() string {
 		footerH = 2
 	}
 	
-	panesHeight := m.height - rootTopPad - rootBottomPad - headerHeight - (spacerHeight * 2) - footerH
+	paneBorderV := PaneStyle.GetBorderTopSize() + PaneStyle.GetBorderBottomSize()
+	panesHeight := m.height - rootTopPad - rootBottomPad - headerHeight - spacerHeight - footerH - paneBorderV
 	if panesHeight < 0 {
 		panesHeight = 0
 	}
 
-	// Render panes
-	// Widths are OUTER widths. Internal size + frame(4)
-	listWidth := m.list.Width() + 4
-	listPane := listStyle.Width(listWidth).Height(panesHeight).Render(strings.TrimSuffix(m.list.View(), "\n"))
+	// Render panes — lipgloss Width/Height set content+padding area; border is added outside.
+	// Add back each style's horizontal frame so the pane fills its allocation.
+	listFrameH, _ := ListPaneStyle.GetFrameSize()
+	detailFrameH, _ := DetailPaneStyle.GetFrameSize()
+
+	listPane := listStyle.
+		Width(m.list.Width() + listFrameH).
+		Height(panesHeight).
+		Render(strings.TrimSuffix(m.list.View(), "\n"))
 
 	detailContent := ""
 	if m.detailView.Width > 5 {
-		dWidth := m.detailView.Width + 4
-		detailContent = detailStyle.Width(dWidth).Height(panesHeight).Render(strings.TrimSuffix(m.detailView.View(), "\n"))
+		detailContent = detailStyle.
+			Width(m.detailView.Width + detailFrameH).
+			Height(panesHeight).
+			Render(strings.TrimSuffix(m.detailView.View(), "\n"))
 	}
 
-	searchBar := strings.TrimSuffix(m.getSearchBar(), "\n")
 	mainPanes := lipgloss.JoinHorizontal(lipgloss.Top, listPane, detailContent)
-	
-	// Assembly
+
+	// Size search bar to match the actual rendered panes width
+	panesWidth := lipgloss.Width(mainPanes)
+	searchBar := strings.TrimSuffix(m.getSearchBar(panesWidth), "\n")
+
+	// Assembly — search bar bottom border provides visual separation
 	mainView := lipgloss.JoinVertical(lipgloss.Left,
 		searchBar,
-		"", // spacer
 		mainPanes,
 	)
 
