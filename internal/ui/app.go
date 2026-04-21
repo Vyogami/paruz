@@ -370,6 +370,12 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searchInput.Blur()
 				m.updateSizes()
 				return m, nil
+			case "down":
+				// Move focus from search bar to list pane
+				m.searching = false
+				m.searchInput.Blur()
+				m.updateSizes()
+				return m, nil
 			}
 
 			// Handle input and fetch immediately if changed
@@ -385,6 +391,14 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmd, fetchCmd)
 		} else {
 			switch msg.String() {
+			case "up", "k":
+				// At top of list, move focus to search bar
+				if m.list.Index() == 0 {
+					m.searching = true
+					m.searchInput.Focus()
+					m.updateSizes()
+					return m, nil
+				}
 			case "enter":
 				// Install selected
 				if i, ok := m.list.SelectedItem().(models.Package); ok {
