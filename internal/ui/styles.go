@@ -97,9 +97,9 @@ func ApplyTheme(themeName string) {
 		BorderForeground(theme.Border).
 		Padding(1, 1)
 
-	ListPaneStyle = PaneStyle.Copy()
+	ListPaneStyle = PaneStyle.Copy().MarginLeft(1)
 
-	DetailPaneStyle = PaneStyle.Copy().Padding(1, 2)
+	DetailPaneStyle = PaneStyle.Copy().Padding(1, 2).MarginRight(1)
 
 	SearchStyle = lipgloss.NewStyle()
 
@@ -117,5 +117,6 @@ func ApplyTheme(themeName string) {
 		Foreground(theme.Error)
 
 	StatusBarStyle = lipgloss.NewStyle().
+		MarginLeft(1).
 		Foreground(theme.StatusBar)
 }
