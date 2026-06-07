@@ -60,6 +60,9 @@ aurs:
     depends:
       - paru
       - pacman
+    conflicts:
+      - paruz-git
+      - paruz-bin
     package: |-
       install -Dm755 "./paruz" "${pkgdir}/usr/bin/paruz"
       install -Dm644 "./LICENSE" "${pkgdir}/usr/share/licenses/paruz/LICENSE"

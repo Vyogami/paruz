@@ -8,6 +8,7 @@ arch=('x86_64' 'aarch64' 'armv6h' 'armv7h')
 url="https://github.com/Vyogami/paruz"
 license=('MIT')
 depends=('paru' 'pacman')
+conflicts=('paruz-git' 'paruz-bin')
 options=('!debug')
 
 source_x86_64=("${pkgname}-${pkgver}-x86_64.tar.gz::${url}/releases/download/v${pkgver}/paruz_linux_x86_64.tar.gz")
