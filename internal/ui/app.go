@@ -512,7 +512,9 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				items[i] = p
 			}
 			m.list.SetItems(items)
+			m.list.SetSize(m.list.Width(), m.list.Height())
 			if len(msg.packages) > 0 {
+				m.list.Select(0)
 				m.selectedPkg = &msg.packages[0]
 				cmds = append(cmds, m.fetchPkgInfo(m.selectedPkg.Name))
 			} else {
@@ -696,6 +698,14 @@ const (
 	spacerHeight  = 1 // spacer between panes and status bar
 )
 
+func (m *AppModel) updateShortcut(keyColor lipgloss.Style) string {
+	if m.updateInfo != nil {
+		badge := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true).Render("⬆ Update available")
+		return fmt.Sprintf("%s %s", keyColor.Render("[U]"), badge)
+	}
+	return fmt.Sprintf("%s check update", keyColor.Render("[U]"))
+}
+
 func (m *AppModel) updateSizes() {
 	// Determine footer height (1 or 2 lines)
 	footerH := 1
@@ -714,12 +724,12 @@ func (m *AppModel) updateSizes() {
 			keyColor.Render("[esc]"),
 		)
 	} else {
-		shortcuts = fmt.Sprintf("%s install • %s update mirrors • %s refresh cache • %s settings • %s check update • %s quit",
+		shortcuts = fmt.Sprintf("%s install • %s update mirrors • %s refresh cache • %s settings • %s • %s quit",
 			keyColor.Render("[enter]"),
 			keyColor.Render("[u]"),
 			keyColor.Render("[r]"),
 			keyColor.Render("[,]"),
-			keyColor.Render("[U]"),
+			m.updateShortcut(keyColor),
 			keyColor.Render("[q]"),
 		)
 	}
@@ -961,12 +971,12 @@ func (m *AppModel) View() string {
 			keyColor.Render("[esc]"),
 		)
 	} else {
-		shortcuts = fmt.Sprintf("%s install • %s update mirrors • %s refresh cache • %s settings • %s check update • %s quit",
+		shortcuts = fmt.Sprintf("%s install • %s update mirrors • %s refresh cache • %s settings • %s • %s quit",
 			keyColor.Render("[enter]"),
 			keyColor.Render("[u]"),
 			keyColor.Render("[r]"),
 			keyColor.Render("[,]"),
-			keyColor.Render("[U]"),
+			m.updateShortcut(keyColor),
 			keyColor.Render("[q]"),
 		)
 	}
@@ -1044,11 +1054,6 @@ func (m *AppModel) View() string {
 		if m.updateStatusMsg == "Up to date" {
 			statusText = fmt.Sprintf("Up to date %s", tickView)
 		}
-	}
-
-	if m.updateInfo != nil && m.state == stateSearch && !m.updateChecking && m.updateStatusMsg == "" {
-		updateBadge := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true).Render(" ⬆ Update available")
-		statusText = statusText + updateBadge
 	}
 
 	statusPart = fmt.Sprintf("%s %s", statusLabel, statusText)
