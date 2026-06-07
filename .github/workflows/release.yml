@@ -30,4 +30,41 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AUR_KEY: ${{ secrets.AUR_KEY }}
+
+  aur:
+    name: Publish to AUR (paruz)
+    needs: goreleaser
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Update PKGBUILD for ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ver="${GITHUB_REF_NAME#v}"
+          cd packaging/aur/paruz
+          curl -fsSL -o checksums.txt \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/checksums.txt"
+          sum() { grep "  $1\$" checksums.txt | cut -d' ' -f1; }
+          sed -i \
+            -e "s/^pkgver=.*/pkgver=${ver}/" \
+            -e "s/^pkgrel=.*/pkgrel=1/" \
+            -e "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('$(sum paruz_linux_x86_64.tar.gz)')/" \
+            -e "s/^sha256sums_aarch64=.*/sha256sums_aarch64=('$(sum paruz_linux_arm64.tar.gz)')/" \
+            -e "s/^sha256sums_armv6h=.*/sha256sums_armv6h=('$(sum paruz_linux_v6.tar.gz)')/" \
+            -e "s/^sha256sums_armv7h=.*/sha256sums_armv7h=('$(sum paruz_linux_v7.tar.gz)')/" \
+            PKGBUILD
+          rm -f checksums.txt
+          echo "----- generated PKGBUILD -----"
+          cat PKGBUILD
+
+      - name: Publish to the AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v4
+        with:
+          pkgname: paruz
+          pkgbuild: ./packaging/aur/paruz/PKGBUILD
+          commit_username: vyogami
+          commit_email: shiv.05cs@gmail.com
+          ssh_private_key: ${{ secrets.AUR_KEY }}
+          commit_message: "Update to ${{ github.ref_name }}"
