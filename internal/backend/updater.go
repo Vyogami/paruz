@@ -2,7 +2,10 @@ package backend
 
 import (
 	"archive/tar"
+	"bufio"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,18 +14,20 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"golang.org/x/mod/semver"
 )
 
 const (
 	githubReleaseURL = "https://api.github.com/repos/vyogami/paruz/releases/latest"
 	httpTimeout      = 10 * time.Second
 	downloadTimeout  = 120 * time.Second
-	maxDownloadSize  = 50 * 1024 * 1024 // 50 MB sanity limit
+	maxArchiveSize   = 50 * 1024 * 1024  // 50 MB compressed sanity limit
+	maxBinarySize    = 200 * 1024 * 1024 // 200 MB uncompressed sanity limit
+	userAgent        = "paruz-updater"
 )
 
 // GitHubRelease represents a GitHub release API response.
@@ -43,7 +48,9 @@ type GitHubAsset struct {
 type UpdateInfo struct {
 	CurrentVersion string
 	LatestVersion  string
+	AssetName      string
 	DownloadURL    string
+	ChecksumURL    string
 	ReleaseURL     string
 	PackageManaged bool // true if binary is managed by pacman
 }
@@ -68,12 +75,20 @@ func CheckForUpdate(currentVersion string) tea.Cmd {
 }
 
 func checkLatestRelease(currentVersion string) (*UpdateInfo, error) {
+	// Development / unknown builds (e.g. plain `go build`) carry no real
+	// version, so never offer to self-update them.
+	if !semver.IsValid(canonicalVersion(currentVersion)) {
+		return nil, nil
+	}
+
 	client := &http.Client{Timeout: httpTimeout}
-	req, err := http.NewRequest("GET", githubReleaseURL, nil)
+	req, err := http.NewRequest(http.MethodGet, githubReleaseURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "paruz-updater/"+currentVersion)
+	req.Header.Set("User-Agent", userAgent+"/"+currentVersion)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -81,8 +96,9 @@ func checkLatestRelease(currentVersion string) (*UpdateInfo, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
 	}
 
 	var release GitHubRelease
@@ -98,47 +114,71 @@ func checkLatestRelease(currentVersion string) (*UpdateInfo, error) {
 		return nil, nil
 	}
 
-	// Check if the current binary is managed by pacman
+	// Check if the current binary is managed by pacman.
 	pkgManaged := isPackageManaged()
 
-	assetName := getAssetName()
-	if assetName == "" && !pkgManaged {
-		return nil, fmt.Errorf("unsupported architecture: %s/%s", runtime.GOOS, runtime.GOARCH)
+	info := &UpdateInfo{
+		CurrentVersion: currentVersion,
+		LatestVersion:  release.TagName,
+		ReleaseURL:     release.HTMLURL,
+		PackageManaged: pkgManaged,
 	}
 
-	var downloadURL string
+	// Package-managed binaries are updated via pacman/paru, so we don't need
+	// to resolve a downloadable asset for them.
+	if pkgManaged {
+		return info, nil
+	}
+
+	candidates := getAssetCandidates()
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("unsupported platform: %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+
 	for _, asset := range release.Assets {
-		if asset.Name == assetName {
-			downloadURL = asset.BrowserDownloadURL
+		if asset.Name == "checksums.txt" {
+			info.ChecksumURL = asset.BrowserDownloadURL
+		}
+	}
+
+	for _, name := range candidates {
+		for _, asset := range release.Assets {
+			if asset.Name == name {
+				info.AssetName = asset.Name
+				info.DownloadURL = asset.BrowserDownloadURL
+				break
+			}
+		}
+		if info.DownloadURL != "" {
 			break
 		}
 	}
 
-	return &UpdateInfo{
-		CurrentVersion: currentVersion,
-		LatestVersion:  release.TagName,
-		DownloadURL:    downloadURL,
-		ReleaseURL:     release.HTMLURL,
-		PackageManaged: pkgManaged,
-	}, nil
+	if info.DownloadURL == "" {
+		return nil, fmt.Errorf("release %s has no asset for %s/%s", release.TagName, runtime.GOOS, runtime.GOARCH)
+	}
+
+	return info, nil
 }
 
-// getAssetName maps runtime.GOOS/GOARCH to the GoReleaser archive name.
-func getAssetName() string {
+// getAssetCandidates maps runtime.GOOS/GOARCH to the GoReleaser archive
+// name(s), in order of preference. For ARM we can't read GOARM at runtime, so
+// prefer the v6 build, which also runs on v7 hardware.
+func getAssetCandidates() []string {
 	if runtime.GOOS != "linux" {
-		return ""
+		return nil
 	}
 	switch runtime.GOARCH {
 	case "amd64":
-		return "paruz_linux_x86_64.tar.gz"
+		return []string{"paruz_linux_x86_64.tar.gz"}
 	case "arm64":
-		return "paruz_linux_arm64.tar.gz"
+		return []string{"paruz_linux_arm64.tar.gz"}
 	case "386":
-		return "paruz_linux_i386.tar.gz"
+		return []string{"paruz_linux_i386.tar.gz"}
 	case "arm":
-		return "paruz_linux_v7.tar.gz"
+		return []string{"paruz_linux_v6.tar.gz", "paruz_linux_v7.tar.gz"}
 	default:
-		return ""
+		return nil
 	}
 }
 
@@ -148,68 +188,56 @@ func isPackageManaged() bool {
 	if err != nil {
 		return false
 	}
-	execPath, err = filepath.EvalSymlinks(execPath)
+	resolved, err := filepath.EvalSymlinks(execPath)
 	if err != nil {
-		return false
+		resolved = execPath
 	}
-	// pacman -Qo returns 0 if the file belongs to a package
-	cmd := exec.Command("pacman", "-Qo", execPath)
-	return cmd.Run() == nil
-}
-
-// isNewer returns true if latest is a newer version than current.
-// Both should be semver-like (optionally prefixed with 'v').
-func isNewer(latest, current string) bool {
-	lMajor, lMinor, lPatch, lPre := parseVersion(latest)
-	cMajor, cMinor, cPatch, cPre := parseVersion(current)
-
-	if lMajor != cMajor {
-		return lMajor > cMajor
+	// pacman -Qo returns 0 if the file belongs to a package. Check both the
+	// symlink and the resolved target, since a package may own either.
+	if exec.Command("pacman", "-Qo", resolved).Run() == nil {
+		return true
 	}
-	if lMinor != cMinor {
-		return lMinor > cMinor
-	}
-	if lPatch != cPatch {
-		return lPatch > cPatch
-	}
-	// If numeric parts are equal: release (no pre-release) > pre-release
-	if cPre != "" && lPre == "" {
+	if resolved != execPath && exec.Command("pacman", "-Qo", execPath).Run() == nil {
 		return true
 	}
 	return false
 }
 
-// parseVersion parses "v1.2.3-alpha" into (1, 2, 3, "alpha").
-func parseVersion(v string) (major, minor, patch int, pre string) {
-	v = strings.TrimPrefix(v, "v")
-	// Split pre-release: "1.2.3-alpha" -> "1.2.3", "alpha"
-	if idx := strings.Index(v, "-"); idx != -1 {
-		pre = v[idx+1:]
-		v = v[:idx]
+// canonicalVersion ensures the version has the leading "v" that
+// golang.org/x/mod/semver requires.
+func canonicalVersion(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return v
 	}
-	parts := strings.Split(v, ".")
-	if len(parts) >= 1 {
-		major, _ = strconv.Atoi(parts[0])
+	if !strings.HasPrefix(v, "v") {
+		v = "v" + v
 	}
-	if len(parts) >= 2 {
-		minor, _ = strconv.Atoi(parts[1])
+	return v
+}
+
+// isNewer returns true if latest is a newer version than current.
+func isNewer(latest, current string) bool {
+	l := canonicalVersion(latest)
+	c := canonicalVersion(current)
+	if !semver.IsValid(l) || !semver.IsValid(c) {
+		return false
 	}
-	if len(parts) >= 3 {
-		patch, _ = strconv.Atoi(parts[2])
-	}
-	return
+	return semver.Compare(l, c) > 0
 }
 
 // DownloadAndInstallUpdate returns a tea.Cmd that downloads and installs the update.
 func DownloadAndInstallUpdate(info *UpdateInfo) tea.Cmd {
 	return func() tea.Msg {
-		err := downloadAndReplace(info.DownloadURL)
-		return UpdateDownloadedMsg{Err: err}
+		if info == nil {
+			return UpdateDownloadedMsg{Err: fmt.Errorf("no update information available")}
+		}
+		return UpdateDownloadedMsg{Err: downloadAndReplace(info)}
 	}
 }
 
-func downloadAndReplace(downloadURL string) error {
-	if downloadURL == "" {
+func downloadAndReplace(info *UpdateInfo) error {
+	if info.DownloadURL == "" {
 		return fmt.Errorf("no download URL available")
 	}
 
@@ -221,80 +249,200 @@ func downloadAndReplace(downloadURL string) error {
 	if err != nil {
 		return fmt.Errorf("failed to resolve executable path: %w", err)
 	}
+	destDir := filepath.Dir(execPath)
 
-	// Check the target is writable before downloading
 	fi, err := os.Stat(execPath)
 	if err != nil {
 		return fmt.Errorf("failed to stat current binary: %w", err)
 	}
-	originalMode := fi.Mode()
+	originalMode := fi.Mode().Perm()
 
-	// Download the tar.gz archive
+	// Fetch the expected checksum before downloading the archive.
+	var expectedSum string
+	if info.ChecksumURL != "" && info.AssetName != "" {
+		expectedSum, err = fetchChecksum(info.ChecksumURL, info.AssetName)
+		if err != nil {
+			return fmt.Errorf("failed to fetch checksum: %w", err)
+		}
+	}
+
 	client := &http.Client{Timeout: downloadTimeout}
-	resp, err := client.Get(downloadURL)
+
+	// Download the archive to a temp file, capping the compressed size and
+	// computing its SHA-256 in the same pass.
+	archive, archiveSum, err := downloadArchive(client, info.DownloadURL, destDir)
 	if err != nil {
-		return fmt.Errorf("download failed: %w", err)
+		return err
+	}
+	defer os.Remove(archive)
+
+	if expectedSum != "" && !strings.EqualFold(archiveSum, expectedSum) {
+		return fmt.Errorf("checksum mismatch: archive may be corrupt or tampered with")
+	}
+
+	// Extract the paruz binary directly into a temp file next to the target.
+	tmpBinary, err := extractBinary(archive, destDir, originalMode)
+	if err != nil {
+		return err
+	}
+
+	// Atomic rename replaces the old binary.
+	if err := os.Rename(tmpBinary, execPath); err != nil {
+		os.Remove(tmpBinary)
+		return fmt.Errorf("failed to replace binary: %w", err)
+	}
+
+	// fsync the directory so the rename is durable.
+	if d, derr := os.Open(destDir); derr == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+
+	return nil
+}
+
+// downloadArchive streams the archive to a temp file, enforcing the compressed
+// size limit and returning the temp path plus the archive's hex SHA-256.
+func downloadArchive(client *http.Client, url, destDir string) (string, string, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("download failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("download returned status %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("download returned status %d", resp.StatusCode)
 	}
 
-	// Enforce size limit
-	body := io.LimitReader(resp.Body, maxDownloadSize)
-
-	// Extract the paruz binary from the tar.gz
-	gz, err := gzip.NewReader(body)
+	tmp, err := os.CreateTemp(destDir, ".paruz-archive-*")
 	if err != nil {
-		return fmt.Errorf("failed to decompress: %w", err)
+		return "", "", fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+
+	hasher := sha256.New()
+	// Allow one extra byte so we can detect an oversized archive.
+	limited := io.LimitReader(resp.Body, maxArchiveSize+1)
+	n, err := io.Copy(tmp, io.TeeReader(limited, hasher))
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(tmpPath)
+		return "", "", fmt.Errorf("failed to write archive: %w", err)
+	}
+	if n > maxArchiveSize {
+		os.Remove(tmpPath)
+		return "", "", fmt.Errorf("archive exceeds %d byte limit", maxArchiveSize)
+	}
+
+	return tmpPath, hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+// extractBinary reads the paruz binary out of the tar.gz archive and writes it
+// to a temp file (fsync'd) in destDir, returning the temp path.
+func extractBinary(archivePath, destDir string, mode os.FileMode) (string, error) {
+	af, err := os.Open(archivePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open archive: %w", err)
+	}
+	defer af.Close()
+
+	gz, err := gzip.NewReader(af)
+	if err != nil {
+		return "", fmt.Errorf("failed to decompress: %w", err)
 	}
 	defer gz.Close()
 
 	tr := tar.NewReader(gz)
-	var binaryData []byte
 	for {
 		header, err := tr.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("failed to read archive: %w", err)
+			return "", fmt.Errorf("failed to read archive: %w", err)
 		}
-		// Safety: only accept regular files named exactly "paruz"
-		baseName := filepath.Base(header.Name)
-		if baseName != "paruz" {
+		// Only accept a regular file named exactly "paruz".
+		if header.Typeflag != tar.TypeReg || filepath.Base(header.Name) != "paruz" {
 			continue
 		}
-		if header.Typeflag != tar.TypeReg {
-			continue
-		}
-		// Reject path traversal
 		if strings.Contains(header.Name, "..") {
 			continue
 		}
-		binaryData, err = io.ReadAll(tr)
-		if err != nil {
-			return fmt.Errorf("failed to read binary from archive: %w", err)
+		if header.Size > maxBinarySize {
+			return "", fmt.Errorf("binary exceeds %d byte limit", maxBinarySize)
 		}
-		break
+
+		out, err := os.CreateTemp(destDir, ".paruz-update-*")
+		if err != nil {
+			return "", fmt.Errorf("failed to create temp file: %w", err)
+		}
+		tmpPath := out.Name()
+
+		// Cap extraction defensively in case the tar header lies about size.
+		limited := io.LimitReader(tr, maxBinarySize+1)
+		n, err := io.Copy(out, limited)
+		if err == nil && n > maxBinarySize {
+			err = fmt.Errorf("binary exceeds %d byte limit", maxBinarySize)
+		}
+		if err == nil {
+			err = out.Chmod(mode)
+		}
+		if err == nil {
+			err = out.Sync()
+		}
+		if cerr := out.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			os.Remove(tmpPath)
+			return "", fmt.Errorf("failed to write new binary: %w", err)
+		}
+		return tmpPath, nil
 	}
 
-	if binaryData == nil {
-		return fmt.Errorf("paruz binary not found in archive")
+	return "", fmt.Errorf("paruz binary not found in archive")
+}
+
+// fetchChecksum downloads a GoReleaser checksums.txt and returns the hex
+// SHA-256 recorded for assetName.
+func fetchChecksum(url, assetName string) (string, error) {
+	client := &http.Client{Timeout: httpTimeout}
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("checksums returned status %d", resp.StatusCode)
 	}
 
-	// Write to a temp file in the same directory (required for atomic rename)
-	tmpPath := execPath + ".update-tmp"
-	if err := os.WriteFile(tmpPath, binaryData, originalMode.Perm()); err != nil {
-		return fmt.Errorf("failed to write new binary: %w", err)
+	scanner := bufio.NewScanner(io.LimitReader(resp.Body, 1024*1024))
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) != 2 {
+			continue
+		}
+		if filepath.Base(fields[1]) == assetName {
+			return fields[0], nil
+		}
 	}
-
-	// Atomic rename replaces the old binary
-	if err := os.Rename(tmpPath, execPath); err != nil {
-		os.Remove(tmpPath) // cleanup on failure
-		return fmt.Errorf("failed to replace binary: %w", err)
+	if err := scanner.Err(); err != nil {
+		return "", err
 	}
-
-	return nil
+	return "", fmt.Errorf("no checksum entry for %s", assetName)
 }

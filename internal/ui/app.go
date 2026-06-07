@@ -756,15 +756,22 @@ func (m *AppModel) updateSizes() {
 		detailWidth = availableWidth - listWidth
 	}
 
-	// Internal sizes — subtract actual frame (border+padding) for each style
-	listFrameH, listFrameV := ListPaneStyle.GetFrameSize()
-	detailFrameH, detailFrameV := DetailPaneStyle.GetFrameSize()
+	// Horizontal: subtract the full frame (border+padding+margin) from the
+	// outer width allocation. Vertical: the pane is rendered with
+	// Height(panesHeight), where Height() covers only content+padding (the
+	// border is drawn outside and is already budgeted via paneBorderV). So only
+	// the vertical padding is subtracted here — subtracting the border again
+	// would shrink the content below the pane, leaving an empty band.
+	listFrameH, _ := ListPaneStyle.GetFrameSize()
+	detailFrameH, _ := DetailPaneStyle.GetFrameSize()
+	listPadV := ListPaneStyle.GetPaddingTop() + ListPaneStyle.GetPaddingBottom()
+	detailPadV := DetailPaneStyle.GetPaddingTop() + DetailPaneStyle.GetPaddingBottom()
 
 	listInnerWidth := listWidth - listFrameH
 	if listInnerWidth < 0 {
 		listInnerWidth = 0
 	}
-	listInnerHeight := panesHeight - listFrameV
+	listInnerHeight := panesHeight - listPadV
 	if listInnerHeight < 0 {
 		listInnerHeight = 0
 	}
@@ -774,7 +781,7 @@ func (m *AppModel) updateSizes() {
 	if detailInnerWidth < 0 {
 		detailInnerWidth = 0
 	}
-	detailInnerHeight := panesHeight - detailFrameV
+	detailInnerHeight := panesHeight - detailPadV
 	if detailInnerHeight < 0 {
 		detailInnerHeight = 0
 	}
