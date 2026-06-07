@@ -56,10 +56,14 @@ type AppModel struct {
 	settingsTotal int
 
 	// Data
-	packages    []models.Package
-	selectedPkg *models.Package
-	pkgInfo     string
-	errorMsg    string
+	packages       []models.Package
+	selectedPkg    *models.Package
+	pkgInfo        string
+	pkgInfoCache   map[string]string // cached `paru -Si` output keyed by pkg name
+	pkgInfoSeq     int               // generation counter for debounced info fetches
+	pkgInfoLoading bool              // true while the selected package's info is being fetched
+	prefetchSeq    int               // generation counter for debounced result prefetch
+	errorMsg       string
 
 	// Window dimensions
 	width  int
@@ -115,6 +119,7 @@ func InitialModel(version string) *AppModel {
 		settingsIndex:     0,
 		settingsTotal:     3, // AUR Helper, Mirror Helper, Theme
 		bootstrapSelected: make(map[int]bool),
+		pkgInfoCache:      make(map[string]string),
 	}
 
 	// Check dependencies
@@ -222,11 +227,87 @@ type pkgInfoFetchedMsg struct {
 	err     error
 }
 
+// pkgInfoDebounceMsg fires a short delay after the selection last changed; the
+// expensive `paru -Si` fetch only runs if no newer selection has superseded it.
+type pkgInfoDebounceMsg struct {
+	seq     int
+	pkgName string
+}
+
+// prefetchTriggerMsg fires a short delay after a new result set settles, to
+// start prefetching detail for the visible packages.
+type prefetchTriggerMsg struct {
+	seq int
+}
+
+// prefetchDoneMsg carries batch-fetched package info to populate the cache.
+type prefetchDoneMsg struct {
+	infos map[string]string
+}
+
+// pkgInfoDebounce is how long to wait after the selection settles before
+// running `paru -Si`, so scrolling through the list stays snappy.
+const pkgInfoDebounce = 150 * time.Millisecond
+
+// prefetchDelay is how long to wait after a result set settles before
+// prefetching details; prefetchMax bounds how many are fetched per batch.
+const (
+	prefetchDelay = 250 * time.Millisecond
+	prefetchMax   = 40
+)
+
 func (m *AppModel) fetchPkgInfo(pkgName string) tea.Cmd {
 	return func() tea.Msg {
 		info, err := backend.GetPackageInfo(pkgName, m.config.AURHelper)
 		return pkgInfoFetchedMsg{pkgName: pkgName, info: info, err: err}
 	}
+}
+
+// selectPackage updates the detail pane for a newly selected package. Cached
+// info is shown instantly; otherwise a styled loading state (spinner) is shown
+// and the full fetch is debounced so scrolling stays snappy.
+func (m *AppModel) selectPackage(p models.Package) tea.Cmd {
+	m.selectedPkg = &p
+	if cached, ok := m.pkgInfoCache[p.Name]; ok {
+		m.pkgInfoLoading = false
+		m.pkgInfo = cached
+		m.detailView.SetContent(m.pkgInfo)
+		return nil
+	}
+	m.pkgInfoLoading = true
+	m.pkgInfoSeq++
+	seq := m.pkgInfoSeq
+	name := p.Name
+	return tea.Tick(pkgInfoDebounce, func(time.Time) tea.Msg {
+		return pkgInfoDebounceMsg{seq: seq, pkgName: name}
+	})
+}
+
+// schedulePrefetch debounces prefetching of the current result set's details.
+func (m *AppModel) schedulePrefetch() tea.Cmd {
+	m.prefetchSeq++
+	seq := m.prefetchSeq
+	return tea.Tick(prefetchDelay, func(time.Time) tea.Msg {
+		return prefetchTriggerMsg{seq: seq}
+	})
+}
+
+// prefetchInfo batch-fetches `paru -Si` for the given (uncached) package names.
+func (m *AppModel) prefetchInfo(names []string) tea.Cmd {
+	helper := m.config.AURHelper
+	return func() tea.Msg {
+		infos, _ := backend.GetPackagesInfo(names, helper)
+		return prefetchDoneMsg{infos: infos}
+	}
+}
+
+// loadingView renders the detail pane while package info is being fetched: the
+// package name above an animated spinner, instead of a bare gap.
+func (m *AppModel) loadingView() string {
+	name := m.selectedPkg.Name
+	header := InfoTitleStyle.Render(name)
+	loading := lipgloss.NewStyle().Faint(true).Render(m.spinner.View() + " Loading details…")
+	return lipgloss.JoinVertical(lipgloss.Left, header, loading)
 }
 
 type execFinishedMsg struct {
@@ -516,20 +597,76 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.list.SetSize(m.list.Width(), m.list.Height())
 			if len(msg.packages) > 0 {
 				m.list.Select(0)
-				m.selectedPkg = &msg.packages[0]
-				cmds = append(cmds, m.fetchPkgInfo(m.selectedPkg.Name))
+				cmds = append(cmds, m.selectPackage(msg.packages[0]))
+				cmds = append(cmds, m.schedulePrefetch())
 			} else {
+				m.selectedPkg = nil
+				m.pkgInfoLoading = false
 				m.pkgInfo = "No packages found."
 				m.detailView.SetContent(m.pkgInfo)
 			}
 		}
 
+	case pkgInfoDebounceMsg:
+		// Run the fetch only if this is still the current selection and we
+		// haven't already cached the result in the meantime.
+		if msg.seq != m.pkgInfoSeq {
+			break
+		}
+		if _, ok := m.pkgInfoCache[msg.pkgName]; ok {
+			break
+		}
+		cmds = append(cmds, m.fetchPkgInfo(msg.pkgName))
+
+	case prefetchTriggerMsg:
+		// Only prefetch for the current (settled) result set.
+		if msg.seq != m.prefetchSeq {
+			break
+		}
+		var names []string
+		for _, it := range m.list.Items() {
+			p, ok := it.(models.Package)
+			if !ok {
+				continue
+			}
+			if _, cached := m.pkgInfoCache[p.Name]; !cached {
+				names = append(names, p.Name)
+				if len(names) >= prefetchMax {
+					break
+				}
+			}
+		}
+		if len(names) > 0 {
+			cmds = append(cmds, m.prefetchInfo(names))
+		}
+
+	case prefetchDoneMsg:
+		for name, info := range msg.infos {
+			if _, ok := m.pkgInfoCache[name]; !ok {
+				m.pkgInfoCache[name] = info
+			}
+		}
+		// If the currently selected package was waiting on its info and the
+		// prefetch just supplied it, show it immediately.
+		if m.pkgInfoLoading && m.selectedPkg != nil {
+			if info, ok := m.pkgInfoCache[m.selectedPkg.Name]; ok {
+				m.pkgInfoLoading = false
+				m.pkgInfo = info
+				m.detailView.SetContent(info)
+			}
+		}
+
 	case pkgInfoFetchedMsg:
+		// Cache successful results so revisiting a package is instant.
+		if msg.err == nil {
+			m.pkgInfoCache[msg.pkgName] = msg.info
+		}
 		// Ignore stale responses for a package the selection has moved off of,
 		// so a slow `paru -Si` can't overwrite the detail pane for another pkg.
 		if m.selectedPkg == nil || msg.pkgName != m.selectedPkg.Name {
 			break
 		}
+		m.pkgInfoLoading = false
 		if msg.err != nil {
 			m.pkgInfo = ErrorStyle.Render(msg.err.Error())
 		} else {
@@ -647,8 +784,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Check if selection changed
 		if m.list.Index() != prevIndex && len(m.list.Items()) > 0 {
 			if i, ok := m.list.SelectedItem().(models.Package); ok {
-				m.selectedPkg = &i
-				cmds = append(cmds, m.fetchPkgInfo(i.Name))
+				cmds = append(cmds, m.selectPackage(i))
 			}
 		}
 	}
@@ -1035,10 +1171,16 @@ func (m *AppModel) View() string {
 
 	detailContent := ""
 	if m.detailView.Width > 5 {
+		var inner string
+		if m.pkgInfoLoading && m.selectedPkg != nil {
+			inner = m.loadingView()
+		} else {
+			inner = strings.TrimSuffix(m.detailView.View(), "\n")
+		}
 		detailContent = detailStyle.
 			Width(m.detailView.Width + detailFrameH).
 			Height(panesHeight).
-			Render(strings.TrimSuffix(m.detailView.View(), "\n"))
+			Render(inner)
 	}
 
 	mainPanes := lipgloss.JoinHorizontal(lipgloss.Top, listPane, detailContent)

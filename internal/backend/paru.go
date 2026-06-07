@@ -285,6 +285,62 @@ func GetPackageInfo(pkgName string, aurHelper string) (string, error) {
 	return string(out), nil
 }
 
+// GetPackagesInfo runs `<aurHelper> -Si <pkg1> <pkg2> ...` in a single call and
+// returns each package's info block keyed by name. It is used to prefetch
+// details for a page of search results so scrolling is instant. Packages that
+// aren't found are simply omitted; a partial result is still returned even if
+// the helper exits non-zero.
+func GetPackagesInfo(names []string, aurHelper string) (map[string]string, error) {
+	if len(names) == 0 {
+		return map[string]string{}, nil
+	}
+	args := append([]string{"-Si"}, names...)
+	out, _ := exec.Command(aurHelper, args...).Output()
+	if len(out) == 0 {
+		return map[string]string{}, nil
+	}
+	return splitInfoBlocks(string(out)), nil
+}
+
+// splitInfoBlocks splits the concatenated `-Si` output into per-package blocks,
+// keyed by each block's "Name" field. Records are separated by a blank line.
+func splitInfoBlocks(out string) map[string]string {
+	res := make(map[string]string)
+	var cur []string
+	flush := func() {
+		if len(cur) == 0 {
+			return
+		}
+		if name := infoBlockName(cur); name != "" {
+			res[name] = strings.Join(cur, "\n") + "\n"
+		}
+		cur = nil
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == "" {
+			flush()
+			continue
+		}
+		cur = append(cur, line)
+	}
+	flush()
+	return res
+}
+
+// infoBlockName extracts the value of the "Name" field from a `-Si` block.
+func infoBlockName(lines []string) string {
+	for _, l := range lines {
+		idx := strings.Index(l, ":")
+		if idx < 0 {
+			continue
+		}
+		if strings.TrimSpace(l[:idx]) == "Name" {
+			return strings.TrimSpace(l[idx+1:])
+		}
+	}
+	return ""
+}
+
 // parseParuSearch parses the multi-line output of `paru -Ss` or `paru -Qs`.
 func parseParuSearch(output string) []models.Package {
 	var pkgs []models.Package
