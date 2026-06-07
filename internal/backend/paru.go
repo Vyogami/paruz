@@ -7,21 +7,42 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/sahilm/fuzzy"
+	"github.com/lithammer/fuzzysearch/fuzzy"
 	"github.com/vyogami/paruz/internal/models"
 )
 
 var (
 	packageCache []string
+	installedSet map[string]struct{}
 	cacheMutex   sync.RWMutex
 	cacheReady   bool
 	isRefreshing bool
 	waiters      []chan struct{}
 )
+
+// loadInstalledSet refreshes the set of locally installed package names via
+// `pacman -Qq`. It is used to flag cached search results as installed.
+func loadInstalledSet() {
+	out, err := exec.Command("pacman", "-Qq").Output()
+	if err != nil {
+		return
+	}
+	set := make(map[string]struct{})
+	for _, line := range strings.Split(string(out), "\n") {
+		name := strings.TrimSpace(line)
+		if name != "" {
+			set[name] = struct{}{}
+		}
+	}
+	cacheMutex.Lock()
+	installedSet = set
+	cacheMutex.Unlock()
+}
 
 func getCacheFile() string {
 	cacheDir, err := os.UserCacheDir()
@@ -34,6 +55,7 @@ func getCacheFile() string {
 }
 
 func InitCacheLocal() {
+	loadInstalledSet()
 	cacheFile := getCacheFile()
 	data, err := os.ReadFile(cacheFile)
 	if err == nil {
@@ -72,6 +94,8 @@ func doCacheInit(done chan struct{}) {
 	cacheMutex.Unlock()
 
 	go func() {
+		loadInstalledSet()
+
 		// 1. Get Repo packages
 		cmd := exec.Command("pacman", "-Slq")
 		out, _ := cmd.Output()
@@ -151,33 +175,11 @@ func SearchPackages(query string, aurHelper string) ([]models.Package, error) {
 
 	if ready {
 		cacheMutex.RLock()
-		defer cacheMutex.RUnlock()
+		candidates := packageCache
+		cacheMutex.RUnlock()
+
 		terms := strings.Fields(query)
-		currentMatches := packageCache
-
-		for _, term := range terms {
-			fuzzyMatches := fuzzy.Find(term, currentMatches)
-			var nextMatches []string
-			for _, match := range fuzzyMatches {
-				nextMatches = append(nextMatches, match.Str)
-			}
-			currentMatches = nextMatches
-			if len(currentMatches) == 0 {
-				break
-			}
-		}
-
-		var pkgs []models.Package
-		for i, matchStr := range currentMatches {
-			if i > 150 { // Limit to top 150 results for UI performance
-				break
-			}
-			pkgs = append(pkgs, models.Package{
-				Name: matchStr,
-				Desc: "Press Enter to install, or scroll to view details.",
-			})
-		}
-		return pkgs, nil
+		return rankMatches(terms, candidates), nil
 	}
 
 	// Fallback if cache not ready
@@ -191,6 +193,86 @@ func SearchPackages(query string, aurHelper string) ([]models.Package, error) {
 	}
 
 	return parseParuSearch(string(out)), nil
+}
+
+// rankMatches keeps candidates that fuzzily match every search term (each term
+// must appear as a case-insensitive subsequence of the package name), then
+// orders them so package-name search feels intuitive: exact matches first, then
+// prefix matches, then substring matches, then remaining fuzzy matches. Within
+// each bucket results are ordered by edit distance to the query and then
+// alphabetically, so a query like "neo" surfaces "neon"/"neoss" above scattered
+// matches such as "nexus-oss". Results are capped to 150 for UI performance.
+func rankMatches(terms []string, candidates []string) []models.Package {
+	if len(terms) == 0 {
+		return nil
+	}
+	queryFlat := strings.ToLower(strings.Join(terms, ""))
+
+	type scored struct {
+		name   string
+		bucket int
+		dist   int
+	}
+
+	var matches []scored
+	for _, name := range candidates {
+		if name == "" {
+			continue
+		}
+		matchesAll := true
+		for _, term := range terms {
+			if !fuzzy.MatchFold(term, name) {
+				matchesAll = false
+				break
+			}
+		}
+		if !matchesAll {
+			continue
+		}
+
+		nl := strings.ToLower(name)
+		bucket := 3 // fuzzy-only
+		switch {
+		case nl == queryFlat:
+			bucket = 0 // exact
+		case strings.HasPrefix(nl, queryFlat):
+			bucket = 1 // prefix
+		case strings.Contains(nl, queryFlat):
+			bucket = 2 // substring
+		}
+
+		matches = append(matches, scored{
+			name:   name,
+			bucket: bucket,
+			dist:   fuzzy.LevenshteinDistance(queryFlat, nl),
+		})
+	}
+
+	sort.SliceStable(matches, func(i, j int) bool {
+		if matches[i].bucket != matches[j].bucket {
+			return matches[i].bucket < matches[j].bucket
+		}
+		if matches[i].dist != matches[j].dist {
+			return matches[i].dist < matches[j].dist
+		}
+		return matches[i].name < matches[j].name
+	})
+
+	var pkgs []models.Package
+	cacheMutex.RLock()
+	installed := installedSet
+	cacheMutex.RUnlock()
+	for i, m := range matches {
+		if i >= 150 {
+			break
+		}
+		_, isInstalled := installed[m.name]
+		pkgs = append(pkgs, models.Package{
+			Name:      m.name,
+			Installed: isInstalled,
+		})
+	}
+	return pkgs
 }
 
 // GetPackageInfo runs `<aurHelper> -Si <pkg>` and returns the raw string output.
