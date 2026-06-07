@@ -40,7 +40,7 @@ func GetMissingDependencies(cfg config.Config) []Dependency {
 			missing = append(missing, dep)
 		}
 	}
-	
+
 	// If no AUR helper is installed, offer both
 	if !CheckDependency("paru") && !CheckDependency("yay") {
 		missing = append(missing, HelperDependencies[0]) // paru
@@ -87,9 +87,9 @@ func InstallBatchCmd(deps []Dependency) tea.Cmd {
 			cmdStr = fmt.Sprintf("sudo pacman -S --needed --noconfirm %s", dep.Name)
 		} else {
 			if dep.Name == "paru" || dep.Name == "yay" {
-				cmdStr = fmt.Sprintf("sudo pacman -S --needed --noconfirm base-devel git && " +
-					"rm -rf /tmp/paruz-build-%s && " +
-					"git clone https://aur.archlinux.org/%s.git /tmp/paruz-build-%s && " +
+				cmdStr = fmt.Sprintf("sudo pacman -S --needed --noconfirm base-devel git && "+
+					"rm -rf /tmp/paruz-build-%s && "+
+					"git clone https://aur.archlinux.org/%s.git /tmp/paruz-build-%s && "+
 					"cd /tmp/paruz-build-%s && makepkg -si --noconfirm", dep.Name, dep.Name, dep.Name, dep.Name)
 			} else {
 				helper := "paru"
@@ -101,7 +101,7 @@ func InstallBatchCmd(deps []Dependency) tea.Cmd {
 				cmdStr = fmt.Sprintf("%s -S --needed --noconfirm %s", helper, dep.Name)
 			}
 		}
-		
+
 		if i == 0 {
 			fullCmdStr = fmt.Sprintf("echo 'Installing %s...'; %s", dep.Name, cmdStr)
 		} else {
@@ -111,7 +111,7 @@ func InstallBatchCmd(deps []Dependency) tea.Cmd {
 
 	finalCmd := fmt.Sprintf("%s; echo '\n[Batch installation finished. Press any key to continue...]'; read -n 1 -s -r", fullCmdStr)
 	c := exec.Command("sh", "-c", finalCmd)
-	
+
 	return tea.ExecProcess(c, func(err error) tea.Msg {
 		return BatchBootstrapFinishedMsg{Deps: deps, Err: err}
 	})

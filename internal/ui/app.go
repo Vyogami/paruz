@@ -27,25 +27,28 @@ const (
 	stateBootstrap
 	stateConfirmBootstrap
 	stateBuildingCache
+	stateUpdateAvailable
+	stateUpdating
+	stateUpdateDone
 )
 
 type AppModel struct {
-	state       sessionState
-	list        list.Model
-	delegate    list.DefaultDelegate
-	detailView  viewport.Model
-	searchInput textinput.Model
-	spinner     spinner.Model
-	searching   bool
-	fetching    bool
+	state           sessionState
+	list            list.Model
+	delegate        list.DefaultDelegate
+	detailView      viewport.Model
+	searchInput     textinput.Model
+	spinner         spinner.Model
+	searching       bool
+	fetching        bool
 	refreshingCache bool
-	config      config.Config
-	oldConfig   config.Config
-	version     string
+	config          config.Config
+	oldConfig       config.Config
+	version         string
 
 	// Bootstrap state
-	missingDeps []backend.Dependency
-	bootstrapIdx int
+	missingDeps       []backend.Dependency
+	bootstrapIdx      int
 	bootstrapSelected map[int]bool
 
 	// Settings State
@@ -61,6 +64,11 @@ type AppModel struct {
 	// Window dimensions
 	width  int
 	height int
+
+	// Update state
+	updateInfo      *backend.UpdateInfo
+	updateChecking  bool
+	updateStatusMsg string // timed flash message for update status
 }
 
 func InitialModel(version string) *AppModel {
@@ -111,11 +119,11 @@ func InitialModel(version string) *AppModel {
 		m.state = stateBootstrap
 		// Pre-select only essentials and recommended by default
 		for i, dep := range m.missingDeps {
-			if dep.Category == "System Essentials" || 
-			   dep.Name == "paru" || 
-			   dep.Name == "rate-mirrors" ||
-			   dep.Name == cfg.AURHelper ||
-			   dep.Name == cfg.MirrorHelper {
+			if dep.Category == "System Essentials" ||
+				dep.Name == "paru" ||
+				dep.Name == "rate-mirrors" ||
+				dep.Name == cfg.AURHelper ||
+				dep.Name == cfg.MirrorHelper {
 				m.bootstrapSelected[i] = true
 			}
 		}
@@ -163,13 +171,14 @@ func (m *AppModel) Init() tea.Cmd {
 		textinput.Blink,
 		m.fetchPackages(""), // initial fetch
 		m.spinner.Tick,
+		backend.CheckForUpdate(m.version), // background update check
 	)
-	
+
 	if len(m.missingDeps) == 0 {
 		m.refreshingCache = true
 		cmds = append(cmds, backend.RefreshCache())
 	}
-	
+
 	return tea.Batch(cmds...)
 }
 
@@ -179,6 +188,14 @@ type stopFetchingMsg struct{}
 func stopFetchingCmd() tea.Cmd {
 	return tea.Tick(300*time.Millisecond, func(_ time.Time) tea.Msg {
 		return stopFetchingMsg{}
+	})
+}
+
+type clearUpdateStatusMsg struct{}
+
+func clearUpdateStatusCmd() tea.Cmd {
+	return tea.Tick(5*time.Second, func(_ time.Time) tea.Msg {
+		return clearUpdateStatusMsg{}
 	})
 }
 
@@ -353,6 +370,31 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		if m.state == stateUpdateAvailable {
+			switch msg.String() {
+			case "y", "Y":
+				if m.updateInfo != nil && !m.updateInfo.PackageManaged && m.updateInfo.DownloadURL != "" {
+					m.state = stateUpdating
+					return m, backend.DownloadAndInstallUpdate(m.updateInfo)
+				}
+			case "n", "N", "esc", "q":
+				m.state = stateSearch
+			}
+			return m, nil
+		}
+
+		if m.state == stateUpdating {
+			return m, nil // wait for download to finish
+		}
+
+		if m.state == stateUpdateDone {
+			switch msg.String() {
+			case "enter", "esc", "q":
+				m.state = stateSearch
+			}
+			return m, nil
+		}
+
 		if m.searching {
 			switch msg.String() {
 			case "enter":
@@ -422,6 +464,16 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.oldConfig = m.config
 				m.state = stateSettings
 				return m, nil
+			case "U":
+				// Manual update check (Shift+U)
+				if m.updateInfo != nil {
+					m.state = stateUpdateAvailable
+				} else {
+					m.updateChecking = true
+					m.updateStatusMsg = "Checking for updates…"
+					return m, backend.CheckForUpdate(m.version)
+				}
+				return m, nil
 			case "q":
 				return m, tea.Quit
 			}
@@ -445,9 +497,9 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.query != m.searchInput.Value() {
 			return m, nil
 		}
-		
+
 		cmds = append(cmds, stopFetchingCmd())
-		
+
 		if msg.err != nil {
 			m.errorMsg = msg.err.Error()
 		} else {
@@ -526,6 +578,30 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case error:
 		m.errorMsg = msg.Error()
 
+	case backend.UpdateCheckMsg:
+		m.updateChecking = false
+		if msg.Err == nil && msg.Info != nil {
+			m.updateInfo = msg.Info
+			m.updateStatusMsg = "Update available!"
+			cmds = append(cmds, clearUpdateStatusCmd())
+		} else {
+			// No update or error — show "already on latest" for manual checks
+			m.updateStatusMsg = "Already on latest version ✓"
+			cmds = append(cmds, clearUpdateStatusCmd())
+		}
+
+	case clearUpdateStatusMsg:
+		m.updateStatusMsg = ""
+
+	case backend.UpdateDownloadedMsg:
+		if msg.Err != nil {
+			m.errorMsg = fmt.Sprintf("Update failed: %v", msg.Err)
+			m.state = stateSearch
+		} else {
+			m.updateInfo = nil
+			m.state = stateUpdateDone
+		}
+
 	case backend.CacheRefreshedMsg:
 		m.refreshingCache = false
 		m.errorMsg = ""
@@ -560,13 +636,13 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *AppModel) getSearchBar(barWidth int) string {
 	theme := Themes[m.config.Theme]
-	
+
 	style := SearchStyle.Copy().
 		Width(barWidth).
 		Height(1).
 		Border(lipgloss.NormalBorder(), false, false, true, false).
 		BorderForeground(theme.Border)
-	
+
 	if m.searching {
 		style = style.BorderForeground(theme.InfoKey)
 	}
@@ -581,29 +657,29 @@ func (m *AppModel) getSearchBar(barWidth int) string {
 			Background(theme.InfoKey).
 			Bold(true).
 			Render(" SEARCH ")
-		
+
 		// Constrain search input width to match the bar
 		m.searchInput.Width = barWidth - lipgloss.Width(prefix) - 2
 		if m.searchInput.Width < 5 {
 			m.searchInput.Width = 5
 		}
-		
+
 		content = lipgloss.JoinHorizontal(lipgloss.Top, prefix, " ", m.searchInput.View())
 	} else {
 		prefix := prefixStyle.Copy().
 			Background(theme.Border).
 			Render(" PARUZ ")
-			
+
 		hintText := " Press [/] to start searching packages..."
 		maxHintWidth := barWidth - lipgloss.Width(prefix) - 2
 		if len(hintText) > maxHintWidth && maxHintWidth > 5 {
 			hintText = hintText[:maxHintWidth-3] + "..."
 		}
-		
+
 		hint := lipgloss.NewStyle().Foreground(theme.StatusBar).Render(hintText)
 		content = lipgloss.JoinHorizontal(lipgloss.Top, prefix, hint)
 	}
-	
+
 	return style.Render(content)
 }
 
@@ -626,7 +702,7 @@ func (m *AppModel) updateSizes() {
 	tickView := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("✓") + " "
 	statusText := fmt.Sprintf("Ready %s", tickView)
 	statusPart := fmt.Sprintf("%s %s", statusLabel, statusText)
-	
+
 	shortcuts := ""
 	if m.searching {
 		shortcuts = fmt.Sprintf("%s finish • %s cancel",
@@ -634,16 +710,15 @@ func (m *AppModel) updateSizes() {
 			keyColor.Render("[esc]"),
 		)
 	} else {
-		shortcuts = fmt.Sprintf("%s install • %s update mirrors • %s refresh cache • %s settings • %s quit",
+		shortcuts = fmt.Sprintf("%s install • %s update mirrors • %s refresh cache • %s settings • %s check update • %s quit",
 			keyColor.Render("[enter]"),
 			keyColor.Render("[u]"),
 			keyColor.Render("[r]"),
 			keyColor.Render("[,]"),
+			keyColor.Render("[U]"),
 			keyColor.Render("[q]"),
 		)
 	}
-	
-	// availableWidth with safety buffer
 	availableWidth := m.width - (rootSidePad * 2)
 	if availableWidth < 0 {
 		availableWidth = 0
@@ -751,12 +826,12 @@ func (m *AppModel) View() string {
 				selected = append(selected, dep.Name)
 			}
 		}
-		
+
 		selectedText := strings.Join(selected, ", ")
 		if len(selectedText) > 40 {
 			selectedText = selectedText[:37] + "..."
 		}
-		
+
 		shortcuts := fmt.Sprintf("%s Yes  %s No", keyColor.Render("[y]"), keyColor.Render("[n]"))
 		content := fmt.Sprintf("Install %d selected items?\n(%s)\n\n%s", len(selected), selectedText, shortcuts)
 		pane := PaneStyle.Copy().
@@ -764,7 +839,68 @@ func (m *AppModel) View() string {
 			Height(7).
 			Align(lipgloss.Center).
 			Render(content)
-		
+
+		dialog := lipgloss.JoinVertical(lipgloss.Center, title, pane)
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialog)
+	}
+
+	if m.state == stateUpdateAvailable {
+		theme := Themes[m.config.Theme]
+		keyColor := lipgloss.NewStyle().Foreground(theme.InfoKey)
+
+		title := TitleStyle.Render(" Update Available ")
+		var content string
+		if m.updateInfo != nil && m.updateInfo.PackageManaged {
+			content = fmt.Sprintf(
+				"A new version %s is available!\n(You have %s)\n\nThis binary is managed by your package manager.\nPlease update via pacman/paru instead.\n\n%s dismiss",
+				m.updateInfo.LatestVersion, m.updateInfo.CurrentVersion,
+				keyColor.Render("[esc]"),
+			)
+		} else if m.updateInfo != nil {
+			content = fmt.Sprintf(
+				"A new version %s is available!\n(You have %s)\n\nDo you want to update now?\n\n%s Yes  %s No",
+				m.updateInfo.LatestVersion, m.updateInfo.CurrentVersion,
+				keyColor.Render("[y]"), keyColor.Render("[n]"),
+			)
+		}
+		pane := PaneStyle.Copy().
+			Width(50).
+			Height(8).
+			Align(lipgloss.Center).
+			Render(content)
+
+		dialog := lipgloss.JoinVertical(lipgloss.Center, title, pane)
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialog)
+	}
+
+	if m.state == stateUpdating {
+		title := TitleStyle.Render(" Updating ")
+		content := fmt.Sprintf("%s Downloading and installing update...", m.spinner.View())
+		pane := PaneStyle.Copy().
+			Width(50).
+			Height(3).
+			Align(lipgloss.Center).
+			Render(content)
+
+		dialog := lipgloss.JoinVertical(lipgloss.Center, title, pane)
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialog)
+	}
+
+	if m.state == stateUpdateDone {
+		theme := Themes[m.config.Theme]
+		keyColor := lipgloss.NewStyle().Foreground(theme.InfoKey)
+
+		title := TitleStyle.Render(" Update Complete ")
+		content := fmt.Sprintf(
+			"paruz has been updated successfully!\nPlease restart to use the new version.\n\n%s dismiss",
+			keyColor.Render("[enter]"),
+		)
+		pane := PaneStyle.Copy().
+			Width(50).
+			Height(5).
+			Align(lipgloss.Center).
+			Render(content)
+
 		dialog := lipgloss.JoinVertical(lipgloss.Center, title, pane)
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialog)
 	}
@@ -790,7 +926,6 @@ func (m *AppModel) View() string {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialog)
 	}
 
-
 	theme := Themes[m.config.Theme]
 	listStyle := ListPaneStyle.Copy()
 	detailStyle := DetailPaneStyle.Copy()
@@ -807,7 +942,7 @@ func (m *AppModel) View() string {
 	tickView := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("✓") + " "
 	statusText := fmt.Sprintf("Ready %s", tickView)
 	statusPart := fmt.Sprintf("%s %s", statusLabel, statusText)
-	
+
 	shortcuts := ""
 	if m.searching {
 		shortcuts = fmt.Sprintf("%s finish • %s cancel",
@@ -815,15 +950,16 @@ func (m *AppModel) View() string {
 			keyColor.Render("[esc]"),
 		)
 	} else {
-		shortcuts = fmt.Sprintf("%s install • %s update mirrors • %s refresh cache • %s settings • %s quit",
+		shortcuts = fmt.Sprintf("%s install • %s update mirrors • %s refresh cache • %s settings • %s check update • %s quit",
 			keyColor.Render("[enter]"),
 			keyColor.Render("[u]"),
 			keyColor.Render("[r]"),
 			keyColor.Render("[,]"),
+			keyColor.Render("[U]"),
 			keyColor.Render("[q]"),
 		)
 	}
-	
+
 	availableWidth := m.width - (rootSidePad * 2)
 	if availableWidth < 0 {
 		availableWidth = 0
@@ -832,7 +968,7 @@ func (m *AppModel) View() string {
 	if availableWidth < lipgloss.Width(statusPart)+lipgloss.Width(shortcuts)+5 {
 		footerH = 2
 	}
-	
+
 	paneBorderV := PaneStyle.GetBorderTopSize() + PaneStyle.GetBorderBottomSize()
 	panesHeight := m.height - rootTopPad - rootBottomPad - headerHeight - spacerHeight - footerH - paneBorderV
 	if panesHeight < 0 {
@@ -879,12 +1015,21 @@ func (m *AppModel) View() string {
 		statusText = fmt.Sprintf("Typing Search Query %s", spinnerView)
 	} else if m.refreshingCache {
 		statusText = fmt.Sprintf("Refreshing Cache %s", m.spinner.View())
+	} else if m.updateChecking {
+		statusText = fmt.Sprintf("Checking for updates %s", m.spinner.View())
+	} else if m.updateStatusMsg != "" {
+		statusText = m.updateStatusMsg
+	}
+
+	if m.updateInfo != nil && m.state == stateSearch && !m.updateChecking && m.updateStatusMsg == "" {
+		updateBadge := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true).Render(" ⬆ Update available")
+		statusText = statusText + updateBadge
 	}
 
 	statusPart = fmt.Sprintf("%s %s", statusLabel, statusText)
 	statusPartWidth := lipgloss.Width(statusPart)
 	shortcutsWidth := lipgloss.Width(shortcuts)
-	
+
 	var statusBar string
 	if footerH == 1 {
 		spacerWidth := availableWidth - statusPartWidth - shortcutsWidth
@@ -908,17 +1053,17 @@ func (m *AppModel) View() string {
 	)
 
 	// Final placement with guaranteed dimensions
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Top, 
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Top,
 		lipgloss.NewStyle().Padding(rootTopPad, 0, rootBottomPad, 0).Render(finalContent))
 }
 
 func (m *AppModel) bootstrapView() string {
 	theme := Themes[m.config.Theme]
 	title := TitleStyle.Render(" Dependencies Setup ")
-	
+
 	var content string
 	lastCategory := ""
-	
+
 	for i, dep := range m.missingDeps {
 		if dep.Category != lastCategory {
 			if content != "" {
@@ -933,13 +1078,13 @@ func (m *AppModel) bootstrapView() string {
 		if m.bootstrapSelected[i] {
 			checked = lipgloss.NewStyle().Foreground(theme.TitleBg).Render("✔")
 		}
-		
+
 		name := dep.Name
 		if i == m.bootstrapIdx {
 			cursor = lipgloss.NewStyle().Foreground(theme.TitleBg).Render("> ")
 			name = lipgloss.NewStyle().Foreground(theme.InfoTitle).Bold(true).Render(name)
 		}
-		
+
 		content += fmt.Sprintf("%s%s %s - %s\n", cursor, checked, name, dep.Description)
 	}
 
@@ -961,10 +1106,10 @@ func (m *AppModel) bootstrapView() string {
 		keyColor.Render("[enter]"),
 		keyColor.Render("[q]"),
 	)
-	
+
 	pane := PaneStyle.Copy().Width(dialogWidth).Render(content)
 	footer := StatusBarStyle.Render(footerText)
-	
+
 	dialog := lipgloss.JoinVertical(lipgloss.Center, title, pane, footer)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialog)
 }
@@ -972,7 +1117,7 @@ func (m *AppModel) bootstrapView() string {
 func (m *AppModel) settingsView() string {
 	theme := Themes[m.config.Theme]
 	title := TitleStyle.Render(" Settings ")
-	
+
 	options := []string{
 		fmt.Sprintf("AUR Helper:    %s", m.config.AURHelper),
 		fmt.Sprintf("Mirror Helper: %s", m.config.MirrorHelper),
@@ -1006,7 +1151,7 @@ func (m *AppModel) settingsView() string {
 
 	pane := PaneStyle.Copy().Width(dialogWidth).Render(content)
 	footer := StatusBarStyle.Render(footerText)
-	
+
 	dialog := lipgloss.JoinVertical(lipgloss.Center, title, pane, footer)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dialog)
 }
