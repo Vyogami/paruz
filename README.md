@@ -9,10 +9,23 @@ It allows you to:
 - **Inspect:** View rich package information (`paru -Si`).
 - **Install:** Trigger installations directly from the UI, with standard output and prompts embedded into the TUI.
 - **Mirrors:** Update your pacman mirrorlist using `rate-mirrors`.
+- **Self-update:** Check for and install new paruz releases from within the app (press `U`).
 
 ## Installation
 
-### Quick Install (Linux)
+### Arch Linux (AUR)
+
+Paruz is available on the [AUR](https://aur.archlinux.org/packages/paruz). Install it with any AUR helper:
+
+```bash
+# Pre-built binary (recommended)
+paru -S paruz
+
+# Build the latest commit from source
+paru -S paruz-git
+```
+
+### Quick Install
 
 Install the latest pre-built binary to `/usr/local/bin`:
 
@@ -36,13 +49,17 @@ Run the compiled binary:
 ```
 
 ### Keybindings
-- **`/`**: Start filtering/searching packages
-- **`Enter`**: Install the selected package
-- **`u`**: Update mirrorlist (requires `rate-mirrors` and `sudo`)
-- **`r`**: Refresh package cache
-- **`,`**: Open settings menu
-- **`Esc`**: Exit terminal execution or clear search
-- **`q`**: Quit the application
+
+| Key | Action |
+|-----|--------|
+| `/` or `s` | Open the search bar |
+| `j` / `↓`, `k` / `↑` | Move through the package list (`↑`/`k` at the top jumps back to the search bar) |
+| `Enter` | Install the selected package |
+| `u` | Update the pacman mirrorlist (requires `rate-mirrors` and `sudo`) |
+| `r` | Refresh the package cache |
+| `,` | Open the settings menu |
+| `U` (Shift+U) | Check for a paruz update (and install it in-app) |
+| `q` | Quit the application |
 
 ## Configuration
 

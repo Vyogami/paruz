@@ -35,6 +35,9 @@ archives:
       {{- else if eq .Arch "386" }}i386
       {{- else if eq .Arch "arm" }}v{{ .Arm }}
       {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - LICENSE
+      - README.md
 
 checksum:
   name_template: 'checksums.txt'
