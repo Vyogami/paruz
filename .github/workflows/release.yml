@@ -68,3 +68,25 @@ jobs:
           commit_email: shiv.05cs@gmail.com
           ssh_private_key: ${{ secrets.AUR_KEY }}
           commit_message: "Update to ${{ github.ref_name }}"
+
+      - name: Refresh paruz-git pkgver for ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ver="${GITHUB_REF_NAME#v}"
+          # On a freshly tagged commit `git describe --long` yields <ver>-0-g<sha>,
+          # which the PKGBUILD's pkgver() maps to <ver>.r0.g<sha>. Reproduce that so
+          # the AUR-displayed version tracks the latest release.
+          short="$(git rev-parse --short=7 HEAD)"
+          sed -i "s/^pkgver=.*/pkgver=${ver}.r0.g${short}/" packaging/aur/paruz-git/PKGBUILD
+          echo "----- generated paruz-git PKGBUILD -----"
+          cat packaging/aur/paruz-git/PKGBUILD
+
+      - name: Publish paruz-git to the AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v4.1.3
+        with:
+          pkgname: paruz-git
+          pkgbuild: ./packaging/aur/paruz-git/PKGBUILD
+          commit_username: vyogami
+          commit_email: shiv.05cs@gmail.com
+          ssh_private_key: ${{ secrets.AUR_KEY }}
+          commit_message: "Update to ${{ github.ref_name }}"
