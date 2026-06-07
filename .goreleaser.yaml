@@ -10,6 +10,10 @@ builds:
     binary: paruz
     env:
       - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
     goos:
       - linux
     goarch:
