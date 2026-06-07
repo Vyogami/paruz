@@ -81,6 +81,10 @@ func InitialModel(version string) *AppModel {
 	MergeCustomThemes(config.LoadCustomThemes())
 
 	d := list.NewDefaultDelegate()
+	// Single-line items: the detail pane already shows full info, so a
+	// per-item description is redundant and wastes vertical space.
+	d.ShowDescription = false
+	d.SetSpacing(0)
 	l := list.New([]list.Item{}, d, 0, 0)
 	l.Title = "paruz (installed)"
 	l.SetShowStatusBar(false)
@@ -585,8 +589,8 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateStatusMsg = "Update available!"
 			cmds = append(cmds, clearUpdateStatusCmd())
 		} else {
-			// No update or error — show "already on latest" for manual checks
-			m.updateStatusMsg = "Already on latest version ✓"
+			// No update or error — show "up to date" for manual checks
+			m.updateStatusMsg = "Up to date"
 			cmds = append(cmds, clearUpdateStatusCmd())
 		}
 
@@ -987,10 +991,21 @@ func (m *AppModel) View() string {
 	listFrameH, _ := ListPaneStyle.GetFrameSize()
 	detailFrameH, _ := DetailPaneStyle.GetFrameSize()
 
+	// bubbles v1.0.0 list.View() can render one row taller than its configured
+	// height when the paginator is active (multi-page results). The pane below
+	// uses a fixed Height(), which pads short content but does NOT truncate tall
+	// content, so that extra row would overflow the pane, push total output past
+	// the terminal height, and scroll the whole UI (making the search bar jump).
+	// Clamp the list content to its set height so the pane can never overflow.
+	listView := strings.TrimSuffix(m.list.View(), "\n")
+	if h := m.list.Height(); h > 0 {
+		listView = lipgloss.NewStyle().MaxHeight(h).Render(listView)
+	}
+
 	listPane := listStyle.
 		Width(m.list.Width() + listFrameH).
 		Height(panesHeight).
-		Render(strings.TrimSuffix(m.list.View(), "\n"))
+		Render(listView)
 
 	detailContent := ""
 	if m.detailView.Width > 5 {
@@ -1026,6 +1041,9 @@ func (m *AppModel) View() string {
 		statusText = fmt.Sprintf("Checking for updates %s", m.spinner.View())
 	} else if m.updateStatusMsg != "" {
 		statusText = m.updateStatusMsg
+		if m.updateStatusMsg == "Up to date" {
+			statusText = fmt.Sprintf("Up to date %s", tickView)
+		}
 	}
 
 	if m.updateInfo != nil && m.state == stateSearch && !m.updateChecking && m.updateStatusMsg == "" {

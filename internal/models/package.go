@@ -1,5 +1,9 @@
 package models
 
+import "github.com/charmbracelet/lipgloss"
+
+var installedTagStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+
 type Package struct {
 	Name      string
 	Version   string
@@ -16,7 +20,7 @@ func (p Package) FilterValue() string {
 // Title implements list.DefaultItem interface
 func (p Package) Title() string {
 	if p.Installed {
-		return p.Name + " [installed]"
+		return p.Name + " " + installedTagStyle.Render("[installed]")
 	}
 	return p.Name
 }
