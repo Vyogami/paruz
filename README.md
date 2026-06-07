@@ -1,8 +1,11 @@
 # Paruz
 
-![screenshot](./screenshot.png)
+[![AUR](https://img.shields.io/aur/version/paruz?label=paruz&logo=archlinux)](https://aur.archlinux.org/packages/paruz)
+[![AUR](https://img.shields.io/aur/version/paruz-git?label=paruz-git&logo=archlinux)](https://aur.archlinux.org/packages/paruz-git)
 
 Paruz is a fast, Terminal User Interface (TUI) for Arch Linux that acts as a visual wrapper for the `paru` AUR helper.
+
+![screenshot](./screenshot.png)
 
 It allows you to:
 - **Search:** Quickly search your local pacman sync databases and AUR (via paru -Qs / paru -Ss).
