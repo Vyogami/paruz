@@ -61,8 +61,31 @@ type UpdateCheckMsg struct {
 	Err  error
 }
 
-// UpdateDownloadedMsg is sent after the update download+install completes.
+// PreparedUpdate holds a downloaded, verified binary ready to be installed.
+type PreparedUpdate struct {
+	BinaryPath string      // verified new binary in a writable temp dir
+	ExecPath   string      // destination path to replace
+	Mode       os.FileMode // permission bits to apply
+	NeedsRoot  bool        // true if the destination dir is not user-writable
+	tempDir    string      // temp dir to clean up after install
+}
+
+// Cleanup removes the temporary download directory.
+func (p *PreparedUpdate) Cleanup() {
+	if p != nil && p.tempDir != "" {
+		_ = os.RemoveAll(p.tempDir)
+	}
+}
+
+// UpdateDownloadedMsg is sent after the update is downloaded and verified.
+// The binary is staged but NOT yet installed (installation may require sudo).
 type UpdateDownloadedMsg struct {
+	Prepared *PreparedUpdate
+	Err      error
+}
+
+// UpdateInstalledMsg is sent after the staged binary has been installed.
+type UpdateInstalledMsg struct {
 	Err error
 }
 
@@ -226,79 +249,122 @@ func isNewer(latest, current string) bool {
 	return semver.Compare(l, c) > 0
 }
 
-// DownloadAndInstallUpdate returns a tea.Cmd that downloads and installs the update.
+// DownloadAndInstallUpdate returns a tea.Cmd that downloads and verifies the
+// update into a writable temp dir. The binary is staged (not installed); the
+// caller installs it via InstallUpdateCmd, which may require sudo.
 func DownloadAndInstallUpdate(info *UpdateInfo) tea.Cmd {
 	return func() tea.Msg {
 		if info == nil {
 			return UpdateDownloadedMsg{Err: fmt.Errorf("no update information available")}
 		}
-		return UpdateDownloadedMsg{Err: downloadAndReplace(info)}
+		prepared, err := downloadAndStage(info)
+		return UpdateDownloadedMsg{Prepared: prepared, Err: err}
 	}
 }
 
-func downloadAndReplace(info *UpdateInfo) error {
+// InstallUpdateCmd installs a previously staged binary over the running
+// executable, escalating with sudo when the destination is not user-writable.
+// It runs as an external process so sudo can prompt for a password in the TUI.
+func InstallUpdateCmd(p *PreparedUpdate) tea.Cmd {
+	mode := fmt.Sprintf("%o", p.Mode.Perm())
+	// Copy the staged binary to a temp file in the destination directory (same
+	// filesystem, so the following rename is atomic and never leaves a partial
+	// binary), then rename it over the running executable. Paths are passed as
+	// positional args ($1..$3) and never interpolated into the script, so there
+	// is no shell-quoting or injection risk regardless of the install path.
+	const script = `tmp="$3.update.$$"
+install -m "$1" "$2" "$tmp" && mv -f "$tmp" "$3" || { rm -f "$tmp"; echo; echo '[Update failed — press any key to return to paruz...]'; read -n 1 -s -r; exit 1; }`
+	args := []string{"sh", "-c", script, "sh", mode, p.BinaryPath, p.ExecPath}
+	if p.NeedsRoot {
+		args = append([]string{"sudo"}, args...)
+	}
+	cmd := exec.Command(args[0], args[1:]...)
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		p.Cleanup()
+		return UpdateInstalledMsg{Err: err}
+	})
+}
+
+func downloadAndStage(info *UpdateInfo) (*PreparedUpdate, error) {
 	if info.DownloadURL == "" {
-		return fmt.Errorf("no download URL available")
+		return nil, fmt.Errorf("no download URL available")
 	}
 
 	execPath, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("failed to get executable path: %w", err)
+		return nil, fmt.Errorf("failed to get executable path: %w", err)
 	}
 	execPath, err = filepath.EvalSymlinks(execPath)
 	if err != nil {
-		return fmt.Errorf("failed to resolve executable path: %w", err)
+		return nil, fmt.Errorf("failed to resolve executable path: %w", err)
 	}
 	destDir := filepath.Dir(execPath)
 
 	fi, err := os.Stat(execPath)
 	if err != nil {
-		return fmt.Errorf("failed to stat current binary: %w", err)
+		return nil, fmt.Errorf("failed to stat current binary: %w", err)
 	}
 	originalMode := fi.Mode().Perm()
+
+	// Stage the download in a user-writable temp dir; the destination dir
+	// (e.g. /usr/local/bin) may be root-owned, so we never write there directly.
+	tempDir, err := os.MkdirTemp("", "paruz-update-*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp dir: %w", err)
+	}
 
 	// Fetch the expected checksum before downloading the archive.
 	var expectedSum string
 	if info.ChecksumURL != "" && info.AssetName != "" {
 		expectedSum, err = fetchChecksum(info.ChecksumURL, info.AssetName)
 		if err != nil {
-			return fmt.Errorf("failed to fetch checksum: %w", err)
+			os.RemoveAll(tempDir)
+			return nil, fmt.Errorf("failed to fetch checksum: %w", err)
 		}
 	}
 
 	client := &http.Client{Timeout: downloadTimeout}
 
-	// Download the archive to a temp file, capping the compressed size and
-	// computing its SHA-256 in the same pass.
-	archive, archiveSum, err := downloadArchive(client, info.DownloadURL, destDir)
+	// Download the archive, capping the compressed size and computing its
+	// SHA-256 in the same pass.
+	archive, archiveSum, err := downloadArchive(client, info.DownloadURL, tempDir)
 	if err != nil {
-		return err
+		os.RemoveAll(tempDir)
+		return nil, err
 	}
 	defer os.Remove(archive)
 
 	if expectedSum != "" && !strings.EqualFold(archiveSum, expectedSum) {
-		return fmt.Errorf("checksum mismatch: archive may be corrupt or tampered with")
+		os.RemoveAll(tempDir)
+		return nil, fmt.Errorf("checksum mismatch: archive may be corrupt or tampered with")
 	}
 
-	// Extract the paruz binary directly into a temp file next to the target.
-	tmpBinary, err := extractBinary(archive, destDir, originalMode)
+	// Extract the paruz binary into the temp dir.
+	tmpBinary, err := extractBinary(archive, tempDir, originalMode)
 	if err != nil {
-		return err
+		os.RemoveAll(tempDir)
+		return nil, err
 	}
 
-	// Atomic rename replaces the old binary.
-	if err := os.Rename(tmpBinary, execPath); err != nil {
-		os.Remove(tmpBinary)
-		return fmt.Errorf("failed to replace binary: %w", err)
-	}
+	return &PreparedUpdate{
+		BinaryPath: tmpBinary,
+		ExecPath:   execPath,
+		Mode:       originalMode,
+		NeedsRoot:  !dirWritable(destDir),
+		tempDir:    tempDir,
+	}, nil
+}
 
-	// fsync the directory so the rename is durable.
-	if d, derr := os.Open(destDir); derr == nil {
-		_ = d.Sync()
-		_ = d.Close()
+// dirWritable reports whether the current user can create files in dir.
+func dirWritable(dir string) bool {
+	probe, err := os.CreateTemp(dir, ".paruz-perm-*")
+	if err != nil {
+		return false
 	}
-
-	return nil
+	name := probe.Name()
+	probe.Close()
+	os.Remove(name)
+	return true
 }
 
 // downloadArchive streams the archive to a temp file, enforcing the compressed

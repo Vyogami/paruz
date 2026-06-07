@@ -217,14 +217,15 @@ func (m *AppModel) fetchPackages(query string) tea.Cmd {
 }
 
 type pkgInfoFetchedMsg struct {
-	info string
-	err  error
+	pkgName string
+	info    string
+	err     error
 }
 
 func (m *AppModel) fetchPkgInfo(pkgName string) tea.Cmd {
 	return func() tea.Msg {
 		info, err := backend.GetPackageInfo(pkgName, m.config.AURHelper)
-		return pkgInfoFetchedMsg{info: info, err: err}
+		return pkgInfoFetchedMsg{pkgName: pkgName, info: info, err: err}
 	}
 }
 
@@ -524,6 +525,11 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case pkgInfoFetchedMsg:
+		// Ignore stale responses for a package the selection has moved off of,
+		// so a slow `paru -Si` can't overwrite the detail pane for another pkg.
+		if m.selectedPkg == nil || msg.pkgName != m.selectedPkg.Name {
+			break
+		}
 		if msg.err != nil {
 			m.pkgInfo = ErrorStyle.Render(msg.err.Error())
 		} else {
@@ -586,20 +592,30 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case backend.UpdateCheckMsg:
 		m.updateChecking = false
-		if msg.Err == nil && msg.Info != nil {
+		if msg.Err != nil {
+			m.updateStatusMsg = "Update check failed"
+		} else if msg.Info != nil {
 			m.updateInfo = msg.Info
 			m.updateStatusMsg = "Update available!"
-			cmds = append(cmds, clearUpdateStatusCmd())
 		} else {
-			// No update or error — show "up to date" for manual checks
 			m.updateStatusMsg = "Up to date"
-			cmds = append(cmds, clearUpdateStatusCmd())
 		}
+		cmds = append(cmds, clearUpdateStatusCmd())
 
 	case clearUpdateStatusMsg:
 		m.updateStatusMsg = ""
 
 	case backend.UpdateDownloadedMsg:
+		if msg.Err != nil {
+			m.errorMsg = fmt.Sprintf("Update failed: %v", msg.Err)
+			m.state = stateSearch
+		} else {
+			// Binary staged; install it (may prompt for sudo via ExecProcess).
+			return m, backend.InstallUpdateCmd(msg.Prepared)
+		}
+
+	case backend.UpdateInstalledMsg:
+		m.updateSizes() // terminal may have been resized during the exec
 		if msg.Err != nil {
 			m.errorMsg = fmt.Sprintf("Update failed: %v", msg.Err)
 			m.state = stateSearch
