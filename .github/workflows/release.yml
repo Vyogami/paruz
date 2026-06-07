@@ -60,7 +60,7 @@ jobs:
           cat PKGBUILD
 
       - name: Publish to the AUR
-        uses: KSXGitHub/github-actions-deploy-aur@v4
+        uses: KSXGitHub/github-actions-deploy-aur@v4.1.3
         with:
           pkgname: paruz
           pkgbuild: ./packaging/aur/paruz/PKGBUILD
