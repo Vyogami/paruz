@@ -11,7 +11,7 @@ import (
 // based on the configured helper (reflector or rate-mirrors).
 func GetMirrorUpdateCmd(helper string) tea.Cmd {
 	var cmdStr string
-	
+
 	switch helper {
 	case "reflector":
 		// reflector: find 20 fastest https mirrors and save to mirrorlist, then sync pacman

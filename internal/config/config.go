@@ -158,7 +158,7 @@ func LoadCustomThemes() map[string]CustomTheme {
 	if _, err := os.Stat(themesPath); os.IsNotExist(err) {
 		// Create example themes file
 		f, err := os.Create(themesPath)
-		if (err == nil) {
+		if err == nil {
 			defer f.Close()
 			_ = toml.NewEncoder(f).Encode(ExampleThemesConfig)
 		}
